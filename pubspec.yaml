@@ -1,19 +1,33 @@
 name: dropix
-description: "A new Flutter project."
+description: Cross-platform file transfer app using mDNS device discovery.
 publish_to: 'none'
-version: 0.1.0
+version: 1.0.0+1
 
 environment:
-  sdk: ^3.10.7
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
+  # mDNS discovery + registration (Bonjour/NSD)
+  nsd: 4.1.0
+  # Get device name & info
+  device_info_plus: ^9.0.0
+  # Get local IP address
+  network_info_plus: ^5.0.0
+  # Unique device ID
+  uuid: ^4.0.0
+  # State management
+  provider: ^6.1.0
+  path_provider: ^2.1.5
+  file_picker: ^10.3.10
+  mobile_scanner: ^5.0.0
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true

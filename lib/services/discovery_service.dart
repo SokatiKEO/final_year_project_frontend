@@ -1,0 +1,241 @@
+// lib/services/discovery_service.dart
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:network_info_plus/network_info_plus.dart';
+import 'package:nsd/nsd.dart';
+import 'package:uuid/uuid.dart';
+
+import '../models/discovered_device.dart';
+
+const String _kServiceType = '_dropix._tcp';
+const int _kListenPort = 49152;
+
+class DiscoveryService {
+  static final DiscoveryService _instance = DiscoveryService._internal();
+  factory DiscoveryService() => _instance;
+  DiscoveryService._internal();
+
+  // Keyed by deviceId — guarantees no duplicates
+  final Map<String, DiscoveredDevice> _devices = {};
+  final _devicesController =
+      StreamController<List<DiscoveredDevice>>.broadcast();
+
+  Discovery? _discovery;
+  Registration? _registration;
+
+  bool _isRunning = false;
+  String? _localDeviceId;
+  String? _localDeviceName;
+
+  Stream<List<DiscoveredDevice>> get devicesStream => _devicesController.stream;
+  List<DiscoveredDevice> get devices => List.unmodifiable(_devices.values);
+  bool get isRunning => _isRunning;
+  String? get localDeviceName => _localDeviceName;
+
+  Future<void> start() async {
+    if (_isRunning) return;
+    _isRunning = true;
+    await _resolveLocalIdentity();
+    await _registerOurService();
+    await _startDiscovery();
+  }
+
+  Future<void> stop() async {
+    _isRunning = false;
+    await _stopDiscovery();
+    await _unregisterOurService();
+    _clearDevices();
+  }
+
+  /// Full restart — wipes devices, waits for OS to release mDNS, starts fresh.
+  Future<void> restart() async {
+    print('[Dropix] 🔄 Restarting discovery...');
+
+    // 1. Force stop everything
+    _isRunning = false;
+    await _stopDiscovery();
+    await _unregisterOurService();
+
+    // 2. Wipe device list so UI shows empty, not stale duplicates
+    _clearDevices();
+
+    // 3. Wait for OS to fully release mDNS socket
+    await Future.delayed(const Duration(milliseconds: 800));
+
+    // 4. Start fresh
+    await start();
+  }
+
+  void _clearDevices() {
+    _devices.clear();
+    _pushUpdate(); // Immediately push empty list to UI
+  }
+
+  Future<void> _resolveLocalIdentity() async {
+    _localDeviceId ??= const Uuid().v4();
+    final info = DeviceInfoPlugin();
+    if (Platform.isAndroid) {
+      final android = await info.androidInfo;
+      _localDeviceName = android.model;
+    } else if (Platform.isIOS) {
+      final ios = await info.iosInfo;
+      _localDeviceName = ios.name;
+    } else {
+      _localDeviceName = 'Unknown Device';
+    }
+  }
+
+  Future<void> _registerOurService() async {
+    final serviceName = '$_localDeviceId|$_localDeviceName';
+    final platform =
+        Platform.isAndroid ? 'android' : Platform.isIOS ? 'ios' : 'other';
+    try {
+      _registration = await register(
+        Service(
+          name: serviceName,
+          type: _kServiceType,
+          port: _kListenPort,
+          txt: {
+            'platform': Uint8List.fromList(utf8.encode(platform)),
+            'v': Uint8List.fromList(utf8.encode('1')),
+          },
+        ),
+      );
+      print('[Dropix] ✅ Registered as "$_localDeviceName" on mDNS');
+    } catch (e) {
+      print('[Dropix] ⚠️ Failed to register mDNS service: $e');
+    }
+  }
+
+  Future<void> _unregisterOurService() async {
+    if (_registration != null) {
+      try {
+        await unregister(_registration!);
+        print('[Dropix] 🔴 Unregistered from mDNS');
+      } catch (e) {
+        print('[Dropix] ⚠️ Failed to unregister: $e');
+      }
+      _registration = null;
+    }
+  }
+
+  Future<void> _startDiscovery() async {
+    try {
+      _discovery = await startDiscovery(_kServiceType);
+      _discovery!.addServiceListener((service, status) async {
+        if (status == ServiceStatus.found) {
+          await _onServiceFound(service);
+        } else if (status == ServiceStatus.lost) {
+          _onServiceLost(service);
+        }
+      });
+      print('[Dropix] 🔍 Discovery started for $_kServiceType');
+    } catch (e) {
+      print('[Dropix] ⚠️ Failed to start discovery: $e');
+    }
+  }
+
+  Future<void> _stopDiscovery() async {
+    if (_discovery != null) {
+      try {
+        await stopDiscovery(_discovery!);
+        print('[Dropix] 🔴 Discovery stopped');
+      } catch (e) {
+        print('[Dropix] ⚠️ Failed to stop discovery: $e');
+      }
+      _discovery = null;
+    }
+  }
+
+  Future<void> _onServiceFound(Service service) async {
+    final name = service.name ?? '';
+
+    // Skip our own service
+    if (_localDeviceId != null && name.startsWith(_localDeviceId!)) return;
+
+    final parts = name.split('|');
+    final deviceId = parts.isNotEmpty ? parts[0] : name;
+    final deviceName = parts.length > 1 ? parts[1] : name;
+
+    final platformRaw = service.txt?['platform'];
+    final platform =
+        platformRaw != null ? utf8.decode(platformRaw) : 'unknown';
+
+    final host = service.host ?? await _resolveHost(service);
+    final port = service.port ?? _kListenPort;
+
+    if (host == null) {
+      print('[Dropix] ⚠️ Could not resolve host for $deviceName');
+      return;
+    }
+
+    // If device already exists with same id, just update timestamp — no duplicate
+    if (_devices.containsKey(deviceId)) {
+      print('[Dropix] 🔁 Device already known: $deviceName — skipping');
+      return;
+    }
+
+    // Also check for duplicate by host IP (same device, different uuid edge case)
+    final duplicateByHost = _devices.values
+        .any((d) => d.host == host && d.port == port);
+    if (duplicateByHost) {
+      print('[Dropix] 🔁 Duplicate host detected: $host — skipping');
+      return;
+    }
+
+    final device = DiscoveredDevice(
+      id: deviceId,
+      name: deviceName,
+      platform: platform,
+      host: host,
+      port: port,
+      discoveredAt: DateTime.now(),
+    );
+
+    _devices[deviceId] = device;
+    _pushUpdate();
+    print('[Dropix] 📱 Found device: ${device.name} @ ${device.host}:${device.port}');
+  }
+
+  void _onServiceLost(Service service) {
+    final name = service.name ?? '';
+    final parts = name.split('|');
+    final deviceId = parts.isNotEmpty ? parts[0] : name;
+    if (_devices.remove(deviceId) != null) {
+      _pushUpdate();
+      print('[Dropix] 👋 Device lost: $deviceId');
+    }
+  }
+
+  Future<String?> _resolveHost(Service service) async {
+    try {
+      final networkInfo = NetworkInfo();
+      final wifiIP = await networkInfo.getWifiIP();
+      if (wifiIP == null) return null;
+      final hostname = service.host;
+      if (hostname != null) {
+        final addresses = await InternetAddress.lookup(hostname);
+        if (addresses.isNotEmpty) return addresses.first.address;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _pushUpdate() {
+    if (!_devicesController.isClosed) {
+      _devicesController.add(devices);
+    }
+  }
+
+  void dispose() {
+    stop();
+    _devicesController.close();
+  }
+}
