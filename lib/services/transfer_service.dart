@@ -1,46 +1,18 @@
 // lib/services/transfer_service.dart
-//
-// Handles file transfer between two Dropix devices over a direct TCP socket.
-//
-// PROTOCOL (binary, sequential):
-//
-//  ┌─────────────────────────────────────────────────┐
-//  │  HANDSHAKE  (sender → receiver)                  │
-//  │  4 bytes  : magic number  0x44524F50 ("DROP")    │
-//  │  1 byte   : protocol version (0x01)              │
-//  │  4 bytes  : number of files (uint32 big-endian)  │
-//  └─────────────────────────────────────────────────┘
-//
-//  For each file:
-//  ┌─────────────────────────────────────────────────┐
-//  │  FILE HEADER  (sender → receiver)               │
-//  │  2 bytes  : filename length (uint16)            │
-//  │  N bytes  : filename (UTF-8)                    │
-//  │  8 bytes  : file size in bytes (uint64)         │
-//  └─────────────────────────────────────────────────┘
-//  ┌─────────────────────────────────────────────────┐
-//  │  FILE DATA                                      │
-//  │  Raw bytes, chunked at 64KB                     │
-//  └─────────────────────────────────────────────────┘
-//  ┌─────────────────────────────────────────────────┐
-//  │  ACK  (receiver → sender after each file)       │
-//  │  1 byte : 0x01 = OK, 0x00 = error              │
-//  └─────────────────────────────────────────────────┘
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:path_provider/path_provider.dart';
-import '../models/transfer_file.dart';
 
-// ── Constants ────────────────────────────────────────────────────────────────
+import 'package:path_provider/path_provider.dart';
+
 const int kTransferPort = 49152;
-const int _kChunkSize = 64 * 1024;       // 64 KB chunks
-const List<int> _kMagic = [0x44, 0x52, 0x4F, 0x50]; // "DROP"
+const int _kChunkSize = 64 * 1024;
+const List<int> _kMagic = [0x44, 0x52, 0x4F, 0x50];
 const int _kVersion = 0x01;
 
-// ── Transfer event types ─────────────────────────────────────────────────────
+// ── Events ────────────────────────────────────────────────────────────────────
 
 abstract class TransferEvent {}
 
@@ -55,7 +27,8 @@ class TransferProgress extends TransferEvent {
   final int bytesTransferred;
   final int totalBytes;
   final double speedBytesPerSec;
-  double get percent => totalBytes == 0 ? 0 : bytesTransferred / totalBytes;
+  double get percent =>
+      totalBytes == 0 ? 0 : bytesTransferred / totalBytes;
   TransferProgress({
     required this.fileName,
     required this.bytesTransferred,
@@ -77,10 +50,9 @@ class TransferError extends TransferEvent {
   TransferError(this.message);
 }
 
-// ── Transfer Service ─────────────────────────────────────────────────────────
+// ── Service ───────────────────────────────────────────────────────────────────
 
 class TransferService {
-  // Singleton
   static final TransferService _instance = TransferService._internal();
   factory TransferService() => _instance;
   TransferService._internal();
@@ -88,20 +60,17 @@ class TransferService {
   ServerSocket? _server;
   bool _isListening = false;
 
-  // Stream for incoming transfer events (receiver side)
   final _incomingController =
       StreamController<TransferEvent>.broadcast();
   Stream<TransferEvent> get incomingEvents => _incomingController.stream;
-
   bool get isListening => _isListening;
 
-  // ── SERVER (Receiver) ─────────────────────────────────────────────────────
+  Completer<bool>? _acceptCompleter;
 
-  /// Start TCP server to accept incoming files.
-  /// Should be called once when the app starts.
+  // ── SERVER ────────────────────────────────────────────────────────────────
+
   Future<void> startServer() async {
     if (_isListening) return;
-
     try {
       _server = await ServerSocket.bind(
         InternetAddress.anyIPv4,
@@ -109,15 +78,8 @@ class TransferService {
         shared: true,
       );
       _isListening = true;
-      print('[Dropix] 🖥️ Transfer server listening on port $kTransferPort');
-
-      _server!.listen(
-        _handleIncomingConnection,
-        onError: (e) {
-          print('[Dropix] ⚠️ Server error: $e');
-          _incomingController.add(TransferError(e.toString()));
-        },
-      );
+      print('[Dropix] 🖥️ Server listening on port $kTransferPort');
+      _server!.listen(_handleIncomingConnection);
     } catch (e) {
       print('[Dropix] ❌ Failed to start server: $e');
     }
@@ -127,43 +89,60 @@ class TransferService {
     await _server?.close();
     _server = null;
     _isListening = false;
-    print('[Dropix] 🔴 Transfer server stopped');
   }
 
-  /// Handles a new TCP connection from a sender.
+  void acceptTransfer() => _acceptCompleter?.complete(true);
+  void declineTransfer() => _acceptCompleter?.complete(false);
+
   Future<void> _handleIncomingConnection(Socket socket) async {
-    print('[Dropix] 📥 Incoming connection from ${socket.remoteAddress.address}');
-
+    print('[Dropix] 📥 Connection from ${socket.remoteAddress.address}');
+    final reader = _SocketReader(socket);
     try {
-      final reader = _SocketReader(socket);
-
-      // ── Read handshake ────────────────────────────────────────────────────
+      // Magic + version
       final magic = await reader.readBytes(4);
-      if (!_listEquals(magic, _kMagic)) {
-        throw Exception('Invalid magic number — not a Dropix client');
-      }
-
+      if (!_listEquals(magic, _kMagic)) throw Exception('Not a Dropix client');
       final version = (await reader.readBytes(1))[0];
-      if (version != _kVersion) {
-        throw Exception('Unsupported protocol version: $version');
+      if (version != _kVersion) throw Exception('Unsupported version');
+
+      // File count
+      final fileCount = _readUint32(await reader.readBytes(4));
+      print('[Dropix] 📦 Expecting $fileCount file(s)');
+
+      // Read all file names
+      final fileNames = <String>[];
+      for (int i = 0; i < fileCount; i++) {
+        final nameLen = _readUint16(await reader.readBytes(2));
+        final name = utf8.decode(await reader.readBytes(nameLen));
+        fileNames.add(name);
+        print('[Dropix] 📄 File $i: $name');
       }
 
-      final fileCountBytes = await reader.readBytes(4);
-      final fileCount = ByteData.sublistView(
-        Uint8List.fromList(fileCountBytes),
-      ).getUint32(0, Endian.big);
-
-      print('[Dropix] 📦 Expecting $fileCount file(s)');
+      // Notify UI and wait for user decision
+      _acceptCompleter = Completer<bool>();
       _incomingController.add(TransferStarted(
         deviceName: socket.remoteAddress.address,
-        fileNames: [],
+        fileNames: fileNames,
       ));
 
-      // ── Receive each file ─────────────────────────────────────────────────
-      final saveDir = await _getSaveDirectory();
+      final accepted = await _acceptCompleter!.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => false,
+      );
 
-      for (int i = 0; i < fileCount; i++) {
-        await _receiveFile(reader, socket, saveDir, i + 1, fileCount);
+      // Send decision to sender
+      socket.add([accepted ? 0x01 : 0x00]);
+      await socket.flush();
+      print('[Dropix] ${accepted ? "✅ Accepted" : "❌ Declined"}');
+
+      if (!accepted) {
+        await socket.close();
+        return;
+      }
+
+      // Receive file data
+      final saveDir = await _getSaveDirectory();
+      for (final fileName in fileNames) {
+        await _receiveFileData(reader, socket, fileName, saveDir);
       }
 
       _incomingController.add(TransferComplete());
@@ -172,54 +151,43 @@ class TransferService {
       print('[Dropix] ❌ Receive error: $e');
       _incomingController.add(TransferError(e.toString()));
     } finally {
+      reader.dispose();
       await socket.close();
+      _acceptCompleter = null;
     }
   }
 
-  Future<void> _receiveFile(
+  Future<void> _receiveFileData(
     _SocketReader reader,
     Socket socket,
+    String fileName,
     Directory saveDir,
-    int fileIndex,
-    int totalFiles,
   ) async {
-    // Read filename length + filename
-    final nameLenBytes = await reader.readBytes(2);
-    final nameLen = ByteData.sublistView(Uint8List.fromList(nameLenBytes))
-        .getUint16(0, Endian.big);
-    final nameBytes = await reader.readBytes(nameLen);
-    final fileName = utf8.decode(nameBytes);
+    // Read file size
+    final fileSize = _readUint64(await reader.readBytes(8));
+    print('[Dropix] 📥 Receiving "$fileName" ($fileSize bytes)');
 
-    // Read file size (8 bytes uint64)
-    final sizeBytes = await reader.readBytes(8);
-    final fileSize = ByteData.sublistView(Uint8List.fromList(sizeBytes))
-        .getUint64(0, Endian.big);
-
-    print('[Dropix] 📄 Receiving "$fileName" ($fileSize bytes)');
-
-    // Create output file (handle name conflicts)
     final outFile = _uniqueFile(saveDir, fileName);
     final sink = outFile.openWrite();
 
     int received = 0;
-    final stopwatch = Stopwatch()..start();
-    int lastSpeedBytes = 0;
-    int lastSpeedTime = 0;
+    final sw = Stopwatch()..start();
+    int lastBytes = 0;
+    int lastTime = 0;
 
     while (received < fileSize) {
-      final remaining = fileSize - received;
-      final toRead = remaining < _kChunkSize ? remaining : _kChunkSize;
+      final toRead =
+          (fileSize - received) < _kChunkSize ? (fileSize - received) : _kChunkSize;
       final chunk = await reader.readBytes(toRead);
       sink.add(chunk);
       received += chunk.length;
 
-      // Calculate speed every 500ms
-      final now = stopwatch.elapsedMilliseconds;
+      final now = sw.elapsedMilliseconds;
       double speed = 0;
-      if (now - lastSpeedTime >= 500) {
-        speed = (received - lastSpeedBytes) / ((now - lastSpeedTime) / 1000);
-        lastSpeedBytes = received;
-        lastSpeedTime = now;
+      if (now - lastTime >= 500) {
+        speed = (received - lastBytes) / ((now - lastTime) / 1000);
+        lastBytes = received;
+        lastTime = now;
       }
 
       _incomingController.add(TransferProgress(
@@ -233,7 +201,7 @@ class TransferService {
     await sink.flush();
     await sink.close();
 
-    // Send ACK back to sender
+    // ACK this file
     socket.add([0x01]);
     await socket.flush();
 
@@ -241,147 +209,179 @@ class TransferService {
       fileName: fileName,
       savedPath: outFile.path,
     ));
-
-    print('[Dropix] ✅ Saved "$fileName" to ${outFile.path}');
+    print('[Dropix] ✅ Saved: ${outFile.path}');
   }
 
-  // ── CLIENT (Sender) ───────────────────────────────────────────────────────
+  // ── CLIENT ────────────────────────────────────────────────────────────────
 
-  /// Send files to a remote device.
-  ///
-  /// Returns a stream of [TransferEvent]s for progress tracking.
   Stream<TransferEvent> sendFiles({
     required String host,
     required int port,
-    required List<TransferFile> files,
+    required List<dynamic> files,
   }) async* {
     Socket? socket;
+    _SocketReader? reader;
 
     try {
       print('[Dropix] 📤 Connecting to $host:$port');
       socket = await Socket.connect(
-        host,
-        port,
+        host, port,
         timeout: const Duration(seconds: 10),
       );
-      print('[Dropix] 🔗 Connected to $host:$port');
+      // Use a shared reader so ACK bytes aren't lost
+      reader = _SocketReader(socket);
 
+      print('[Dropix] 🔗 Connected');
       yield TransferStarted(
         deviceName: host,
-        fileNames: files.map((f) => f.name).toList(),
+        fileNames: files.map((f) => f.name as String).toList(),
       );
 
-      // ── Send handshake ────────────────────────────────────────────────────
-      final handshake = BytesBuilder();
-      handshake.add(_kMagic);
-      handshake.addByte(_kVersion);
-      final countBytes = Uint8List(4);
-      ByteData.sublistView(countBytes).setUint32(0, files.length, Endian.big);
-      handshake.add(countBytes);
-      socket.add(handshake.toBytes());
+      // ── Send magic + version + file count ─────────────────────────────────
+      final header = BytesBuilder();
+      header.add(_kMagic);
+      header.addByte(_kVersion);
+      header.add(_uint32Bytes(files.length));
+      socket.add(header.toBytes());
+
+      // ── Send all file names ───────────────────────────────────────────────
+      for (final file in files) {
+        final nameBytes = utf8.encode(file.name as String);
+        final nameHeader = BytesBuilder();
+        nameHeader.add(_uint16Bytes(nameBytes.length));
+        nameHeader.add(nameBytes);
+        socket.add(nameHeader.toBytes());
+      }
       await socket.flush();
+      print('[Dropix] 📋 Sent ${files.length} filename(s), waiting for accept...');
+
+      // ── Wait for accept/decline via shared reader ─────────────────────────
+      final ackBytes = await reader.readBytes(1).timeout(
+        const Duration(seconds: 35),
+        onTimeout: () => throw TimeoutException('No response from receiver'),
+      );
+
+      if (ackBytes[0] != 0x01) {
+        yield TransferError('Receiver declined the transfer');
+        return;
+      }
+      print('[Dropix] ✅ Accepted — streaming files');
 
       // ── Send each file ────────────────────────────────────────────────────
       for (final file in files) {
-        yield* _sendFile(socket, file);
+        yield* _sendFileData(socket, reader, file);
       }
 
       yield TransferComplete();
-      print('[Dropix] ✅ All files sent');
+      print('[Dropix] ✅ All done');
     } catch (e) {
       print('[Dropix] ❌ Send error: $e');
       yield TransferError(e.toString());
     } finally {
+      reader?.dispose();
       await socket?.close();
     }
   }
 
-  Stream<TransferEvent> _sendFile(Socket socket, TransferFile file) async* {
-    final ioFile = File(file.path);
+  Stream<TransferEvent> _sendFileData(
+    Socket socket,
+    _SocketReader reader,
+    dynamic file,
+  ) async* {
+    final ioFile = File(file.path as String);
     final fileSize = await ioFile.length();
+    final fileName = file.name as String;
 
-    // ── File header ────────────────────────────────────────────────────────
-    final nameBytes = utf8.encode(file.name);
-    final header = BytesBuilder();
+    print('[Dropix] 📤 Sending "$fileName" ($fileSize bytes)');
 
-    // Filename length (2 bytes)
-    final nameLenBuf = Uint8List(2);
-    ByteData.sublistView(nameLenBuf).setUint16(0, nameBytes.length, Endian.big);
-    header.add(nameLenBuf);
-
-    // Filename
-    header.add(nameBytes);
-
-    // File size (8 bytes)
-    final sizeBuf = Uint8List(8);
-    ByteData.sublistView(sizeBuf).setUint64(0, fileSize, Endian.big);
-    header.add(sizeBuf);
-
-    socket.add(header.toBytes());
+    // Send file size
+    socket.add(_uint64Bytes(fileSize));
     await socket.flush();
 
-    // ── File data ──────────────────────────────────────────────────────────
-    final stream = ioFile.openRead();
+    // Stream file data
     int sent = 0;
-    final stopwatch = Stopwatch()..start();
-    int lastSpeedBytes = 0;
-    int lastSpeedTime = 0;
+    final sw = Stopwatch()..start();
+    int lastBytes = 0;
+    int lastTime = 0;
 
-    await for (final chunk in stream) {
+    await for (final chunk in ioFile.openRead()) {
       socket.add(chunk);
       sent += chunk.length;
 
-      final now = stopwatch.elapsedMilliseconds;
+      final now = sw.elapsedMilliseconds;
       double speed = 0;
-      if (now - lastSpeedTime >= 500) {
-        speed = (sent - lastSpeedBytes) / ((now - lastSpeedTime) / 1000);
-        lastSpeedBytes = sent;
-        lastSpeedTime = now;
+      if (now - lastTime >= 500) {
+        speed = (sent - lastBytes) / ((now - lastTime) / 1000);
+        lastBytes = sent;
+        lastTime = now;
       }
 
       yield TransferProgress(
-        fileName: file.name,
+        fileName: fileName,
         bytesTransferred: sent,
         totalBytes: fileSize,
         speedBytesPerSec: speed,
       );
     }
-
     await socket.flush();
+    print('[Dropix] ✅ Sent "$fileName", waiting for ACK');
 
-    // Wait for ACK from receiver
-    final ack = await socket.first.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () => throw TimeoutException('No ACK received'),
+    // Wait for per-file ACK via shared reader (not socket.first!)
+    final ack = await reader.readBytes(1).timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => throw TimeoutException('ACK timeout'),
     );
 
-    if (ack.isEmpty || ack[0] != 0x01) {
-      throw Exception('Receiver rejected the file');
-    }
+    if (ack[0] != 0x01) throw Exception('File rejected');
 
     yield TransferFileComplete(
-      fileName: file.name,
-      savedPath: file.path,
+      fileName: fileName,
+      savedPath: file.path as String,
     );
+    print('[Dropix] ✅ ACK received for "$fileName"');
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  int _readUint16(List<int> b) =>
+      ByteData.sublistView(Uint8List.fromList(b)).getUint16(0, Endian.big);
+  int _readUint32(List<int> b) =>
+      ByteData.sublistView(Uint8List.fromList(b)).getUint32(0, Endian.big);
+  int _readUint64(List<int> b) =>
+      ByteData.sublistView(Uint8List.fromList(b)).getUint64(0, Endian.big);
+
+  Uint8List _uint16Bytes(int v) {
+    final b = Uint8List(2);
+    ByteData.sublistView(b).setUint16(0, v, Endian.big);
+    return b;
+  }
+
+  Uint8List _uint32Bytes(int v) {
+    final b = Uint8List(4);
+    ByteData.sublistView(b).setUint32(0, v, Endian.big);
+    return b;
+  }
+
+  Uint8List _uint64Bytes(int v) {
+    final b = Uint8List(8);
+    ByteData.sublistView(b).setUint64(0, v, Endian.big);
+    return b;
+  }
 
   Future<Directory> _getSaveDirectory() async {
     Directory base;
     if (Platform.isAndroid) {
       base = Directory('/storage/emulated/0/Download/Dropix');
     } else if (Platform.isIOS) {
-      base = await getApplicationDocumentsDirectory();
-      base = Directory('${base.path}/Dropix');
+      final docs = await getApplicationDocumentsDirectory();
+      base = Directory('${docs.path}/Dropix');
     } else {
-      base = await getDownloadsDirectory() ?? Directory('/tmp/Dropix');
+      base = Directory('/tmp/Dropix');
     }
     if (!await base.exists()) await base.create(recursive: true);
     return base;
   }
 
-  /// Returns a File that doesn't already exist by appending (1), (2) etc.
   File _uniqueFile(Directory dir, String name) {
     final dot = name.lastIndexOf('.');
     final base = dot >= 0 ? name.substring(0, dot) : name;
@@ -409,53 +409,56 @@ class TransferService {
   }
 }
 
-// ── Socket Reader helper ──────────────────────────────────────────────────────
-// Buffers socket data and lets us read exact byte counts reliably.
+// ── Socket Reader ─────────────────────────────────────────────────────────────
+// Buffers ALL incoming bytes from the socket into a single queue.
+// This prevents bytes being lost when switching between reads.
 
 class _SocketReader {
-  final Socket _socket;
   final _buffer = <int>[];
-  late StreamSubscription _sub;
-  final _completer = Completer<void>();
+  final _waiters = <Completer<void>>[];
   bool _done = false;
+  late StreamSubscription _sub;
 
-  _SocketReader(this._socket) {
-    _sub = _socket.listen(
+  _SocketReader(Socket socket) {
+    _sub = socket.listen(
       (data) {
         _buffer.addAll(data);
-        if (!_completer.isCompleted) _completer.complete();
+        // Wake up anyone waiting for data
+        for (final w in _waiters) {
+          if (!w.isCompleted) w.complete();
+        }
+        _waiters.clear();
       },
       onDone: () {
         _done = true;
-        if (!_completer.isCompleted) _completer.complete();
+        for (final w in _waiters) {
+          if (!w.isCompleted) w.complete();
+        }
+        _waiters.clear();
       },
       onError: (e) {
-        if (!_completer.isCompleted) _completer.completeError(e);
+        _done = true;
+        for (final w in _waiters) {
+          if (!w.isCompleted) w.completeError(e);
+        }
+        _waiters.clear();
       },
     );
   }
 
   Future<List<int>> readBytes(int count) async {
     while (_buffer.length < count) {
-      if (_done) throw Exception('Socket closed before $count bytes available');
-      final c = Completer<void>();
-      _sub.pause();
-      _socket.listen(
-        (data) {
-          _buffer.addAll(data);
-          if (!c.isCompleted) c.complete();
-        },
-        onDone: () {
-          _done = true;
-          if (!c.isCompleted) c.complete();
-        },
-        cancelOnError: false,
-      );
-      _sub.resume();
-      await c.future;
+      if (_done) throw Exception('Socket closed (need $count, have ${_buffer.length})');
+      final waiter = Completer<void>();
+      _waiters.add(waiter);
+      await waiter.future;
     }
     final result = _buffer.sublist(0, count);
     _buffer.removeRange(0, count);
     return result;
+  }
+
+  void dispose() {
+    _sub.cancel();
   }
 }

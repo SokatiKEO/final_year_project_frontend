@@ -92,6 +92,7 @@ class TransferProvider extends ChangeNotifier {
   void acceptIncoming() {
     _incomingAccepted = true;
     _phase = TransferPhase.transferring;
+    _service.acceptTransfer(); // Signal the TCP server to proceed
     notifyListeners();
   }
 
@@ -102,6 +103,7 @@ class TransferProvider extends ChangeNotifier {
     _incomingFromDevice = null;
     _incomingFileNames = [];
     _phase = TransferPhase.idle;
+    _service.declineTransfer(); // Signal the TCP server to reject
     notifyListeners();
   }
 
