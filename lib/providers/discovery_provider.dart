@@ -1,7 +1,6 @@
 // lib/providers/discovery_provider.dart
 
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import '../models/discovered_device.dart';
 import '../services/discovery_service.dart';
@@ -77,7 +76,6 @@ class DiscoveryProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
 
     try {
-      // ⏳ Wait for network stack to be ready on cold start
       await Future.delayed(const Duration(milliseconds: 800));
       await _service.start();
     } catch (e) {

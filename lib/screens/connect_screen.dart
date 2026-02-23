@@ -11,7 +11,6 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-
 import '../models/discovered_device.dart';
 import '../providers/discovery_provider.dart';
 import 'send_screen.dart';

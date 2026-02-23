@@ -15,7 +15,7 @@ class ReceiveSheet extends StatelessWidget {
   static void show(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      isDismissible: false,       // user must explicitly accept or decline
+      isDismissible: false, // user must explicitly accept or decline
       enableDrag: false,
       backgroundColor: Colors.transparent,
       builder: (_) => ChangeNotifierProvider.value(
@@ -47,11 +47,12 @@ class ReceiveSheet extends StatelessWidget {
           ),
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
           child: switch (provider.phase) {
-            TransferPhase.connecting   => _IncomingRequest(provider: provider),
-            TransferPhase.transferring => _ReceivingProgress(provider: provider),
-            TransferPhase.done        => _ReceiveDone(provider: provider),
-            TransferPhase.error       => _ReceiveError(provider: provider),
-            _                         => const SizedBox.shrink(),
+            TransferPhase.connecting => _IncomingRequest(provider: provider),
+            TransferPhase.transferring =>
+              _ReceivingProgress(provider: provider),
+            TransferPhase.done => _ReceiveDone(provider: provider),
+            TransferPhase.error => _ReceiveError(provider: provider),
+            _ => const SizedBox.shrink(),
           },
         );
       },
@@ -67,7 +68,8 @@ class _Handle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Container(
-        width: 40, height: 4,
+        width: 40,
+        height: 4,
         margin: const EdgeInsets.only(bottom: 20),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.12),
@@ -79,7 +81,6 @@ class _Handle extends StatelessWidget {
 }
 
 // ── 1. Incoming request — Accept / Decline ────────────────────────────────────
-
 class _IncomingRequest extends StatelessWidget {
   final TransferProvider provider;
   const _IncomingRequest({required this.provider});
@@ -123,7 +124,8 @@ class _IncomingRequest extends StatelessWidget {
 
         // Sender avatar
         Container(
-          width: 72, height: 72,
+          width: 72,
+          height: 72,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(22),
             gradient: const LinearGradient(
@@ -441,9 +443,9 @@ class _ReceiveDone extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const _Handle(),
-
         Container(
-          width: 72, height: 72,
+          width: 72,
+          height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: const Color(0xFF00E5C0).withOpacity(0.1),
@@ -455,7 +457,6 @@ class _ReceiveDone extends StatelessWidget {
             child: Text('✅', style: TextStyle(fontSize: 32)),
           ),
         ),
-
         const SizedBox(height: 16),
         const Text(
           'Files Received!',
@@ -471,9 +472,7 @@ class _ReceiveDone extends StatelessWidget {
           style: const TextStyle(color: Color(0xFF5A6580), fontSize: 13),
           textAlign: TextAlign.center,
         ),
-
         const SizedBox(height: 24),
-
         GestureDetector(
           onTap: () {
             provider.reset();
@@ -550,7 +549,8 @@ class _ReceiveError extends StatelessWidget {
             child: const Center(
               child: Text(
                 'Dismiss',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
               ),
             ),
           ),
@@ -593,7 +593,8 @@ class _PulseDotState extends State<_PulseDot>
       builder: (_, __) => Opacity(
         opacity: 0.3 + _ctrl.value * 0.7,
         child: Container(
-          width: 6, height: 6,
+          width: 6,
+          height: 6,
           decoration: const BoxDecoration(
             shape: BoxShape.circle,
             color: Color(0xFF00E5C0),
@@ -607,12 +608,32 @@ class _PulseDotState extends State<_PulseDot>
 String _emojiForFile(String name) {
   final ext = name.split('.').last.toLowerCase();
   switch (ext) {
-    case 'jpg': case 'jpeg': case 'png': case 'gif': case 'webp': return '🖼️';
-    case 'mp4': case 'mov': case 'avi': case 'mkv': return '🎬';
-    case 'mp3': case 'aac': case 'wav': case 'flac': return '🎵';
-    case 'pdf': return '📄';
-    case 'zip': case 'rar': case '7z': return '📦';
-    case 'doc': case 'docx': return '📝';
-    default: return '📁';
+    case 'jpg':
+    case 'jpeg':
+    case 'png':
+    case 'gif':
+    case 'webp':
+      return '🖼️';
+    case 'mp4':
+    case 'mov':
+    case 'avi':
+    case 'mkv':
+      return '🎬';
+    case 'mp3':
+    case 'aac':
+    case 'wav':
+    case 'flac':
+      return '🎵';
+    case 'pdf':
+      return '📄';
+    case 'zip':
+    case 'rar':
+    case '7z':
+      return '📦';
+    case 'doc':
+    case 'docx':
+      return '📝';
+    default:
+      return '📁';
   }
 }

@@ -4,12 +4,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:nsd/nsd.dart';
 import 'package:uuid/uuid.dart';
-
 import '../models/discovered_device.dart';
 
 const String _kServiceType = '_dropix._tcp';
@@ -55,18 +53,14 @@ class DiscoveryService {
   /// Full restart — wipes devices, waits for OS to release mDNS, starts fresh.
   Future<void> restart() async {
     print('[Dropix] 🔄 Restarting discovery...');
-
     // 1. Force stop everything
     _isRunning = false;
     await _stopDiscovery();
     await _unregisterOurService();
-
     // 2. Wipe device list so UI shows empty, not stale duplicates
     _clearDevices();
-
     // 3. Wait for OS to fully release mDNS socket
     await Future.delayed(const Duration(milliseconds: 800));
-
     // 4. Start fresh
     await start();
   }
@@ -92,8 +86,11 @@ class DiscoveryService {
 
   Future<void> _registerOurService() async {
     final serviceName = '$_localDeviceId|$_localDeviceName';
-    final platform =
-        Platform.isAndroid ? 'android' : Platform.isIOS ? 'ios' : 'other';
+    final platform = Platform.isAndroid
+        ? 'android'
+        : Platform.isIOS
+            ? 'ios'
+            : 'other';
     try {
       _registration = await register(
         Service(
@@ -163,8 +160,7 @@ class DiscoveryService {
     final deviceName = parts.length > 1 ? parts[1] : name;
 
     final platformRaw = service.txt?['platform'];
-    final platform =
-        platformRaw != null ? utf8.decode(platformRaw) : 'unknown';
+    final platform = platformRaw != null ? utf8.decode(platformRaw) : 'unknown';
 
     final host = service.host ?? await _resolveHost(service);
     final port = service.port ?? _kListenPort;
@@ -181,8 +177,8 @@ class DiscoveryService {
     }
 
     // Also check for duplicate by host IP (same device, different uuid edge case)
-    final duplicateByHost = _devices.values
-        .any((d) => d.host == host && d.port == port);
+    final duplicateByHost =
+        _devices.values.any((d) => d.host == host && d.port == port);
     if (duplicateByHost) {
       print('[Dropix] 🔁 Duplicate host detected: $host — skipping');
       return;
@@ -199,7 +195,8 @@ class DiscoveryService {
 
     _devices[deviceId] = device;
     _pushUpdate();
-    print('[Dropix] 📱 Found device: ${device.name} @ ${device.host}:${device.port}');
+    print(
+        '[Dropix] 📱 Found device: ${device.name} @ ${device.host}:${device.port}');
   }
 
   void _onServiceLost(Service service) {
