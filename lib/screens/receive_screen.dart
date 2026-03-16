@@ -12,8 +12,9 @@ class ReceiveSheet extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isDismissible: false,
-      enableDrag: false,
+      enableDrag: true,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (_) => ChangeNotifierProvider.value(
         value: context.read<TransferProvider>(),
         child: const ReceiveSheet(),
@@ -32,22 +33,28 @@ class ReceiveSheet extends StatelessWidget {
           });
         }
 
-        return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF0E1422),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-            border: Border(
-              top: BorderSide(color: Color(0xFF1E2940), width: 1),
+        // Lock drag during active transfer so it can't be accidentally dismissed
+        final isTransferring = provider.phase == TransferPhase.transferring;
+
+        return GestureDetector(
+          onVerticalDragUpdate: isTransferring ? (_) {} : null,
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFF0E1422),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              border: Border(
+                top: BorderSide(color: Color(0xFF1E2940), width: 1),
+              ),
             ),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
+            child: switch (provider.phase) {
+              TransferPhase.connecting => _IncomingRequest(provider: provider),
+              TransferPhase.transferring => _ReceivingProgress(provider: provider),
+              TransferPhase.done => _ReceiveDone(provider: provider),
+              TransferPhase.error => _ReceiveError(provider: provider),
+              _ => const SizedBox.shrink(),
+            },
           ),
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
-          child: switch (provider.phase) {
-            TransferPhase.connecting => _IncomingRequest(provider: provider),
-            TransferPhase.transferring => _ReceivingProgress(provider: provider),
-            TransferPhase.done => _ReceiveDone(provider: provider),
-            TransferPhase.error => _ReceiveError(provider: provider),
-            _ => const SizedBox.shrink(),
-          },
         );
       },
     );

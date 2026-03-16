@@ -1,12 +1,14 @@
 // lib/providers/transfer_provider.dart
 
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../models/discovered_device.dart';
 import '../models/transfer_file.dart';
 import '../models/transfer_record.dart';
 import '../services/background_service.dart';
+import '../services/discovery_service.dart';
 import '../services/history_service.dart';
 import '../services/notification_service.dart';
 import '../services/transfer_service.dart';
@@ -24,6 +26,7 @@ class TransferProvider extends ChangeNotifier {
   double _speedBytesPerSec = 0;
   String? _errorMessage;
   List<String> _completedFiles = [];
+  List<String> _completedPaths = [];
   StreamSubscription<TransferEvent>? _sub;
 
   // Incoming state
@@ -77,6 +80,7 @@ class TransferProvider extends ChangeNotifier {
         _incomingFileNames = event.fileNames;
         _incomingFileSizes = event.fileSizes;
         _completedFiles = []; // ← reset from any previous transfer
+        _completedPaths = [];
         _phase = TransferPhase.connecting;
         notifyListeners();
 
@@ -98,6 +102,7 @@ class TransferProvider extends ChangeNotifier {
 
       } else if (event is TransferFileComplete) {
         _completedFiles.add(event.fileName);
+        _completedPaths.add(event.savedPath);
         notifyListeners();
 
       } else if (event is TransferComplete) {
@@ -117,6 +122,7 @@ class TransferProvider extends ChangeNotifier {
           deviceName: _incomingFromDevice ?? 'Unknown',
           fileNames: List.from(_completedFiles),
           fileSizes: List.from(_incomingFileSizes),
+          filePaths: List.from(_completedPaths),
           completedAt: DateTime.now(),
           success: true,
           saveFolderPath: _service.saveDirectoryPath,
@@ -162,6 +168,7 @@ class TransferProvider extends ChangeNotifier {
     _phase = TransferPhase.connecting;
     _progress = 0;
     _completedFiles = [];
+    _completedPaths = [];
     _errorMessage = null;
     notifyListeners();
 
@@ -169,7 +176,12 @@ class TransferProvider extends ChangeNotifier {
     await _sub?.cancel();
 
     _sub = _service
-        .sendFiles(host: device.host, port: device.port, files: files)
+        .sendFiles(
+          host: device.host,
+          port: device.port,
+          files: files,
+          deviceName: DiscoveryService().localDeviceName ?? Platform.localHostname,
+        )
         .listen((event) {
       if (event is TransferProgress) {
         _phase = TransferPhase.transferring;
@@ -180,6 +192,7 @@ class TransferProvider extends ChangeNotifier {
         _bg.updateProgress('Sending ${event.fileName} · $pct%');
       } else if (event is TransferFileComplete) {
         _completedFiles.add(event.fileName);
+        _completedPaths.add(event.savedPath);
       } else if (event is TransferComplete) {
         _phase = TransferPhase.done;
         _progress = 1.0;
@@ -196,6 +209,7 @@ class TransferProvider extends ChangeNotifier {
           deviceName: device.name,
           fileNames: files.map((f) => f.name).toList(),
           fileSizes: files.map((f) => f.sizeBytes).toList(),
+          filePaths: files.map((f) => f.path).toList(),
           completedAt: DateTime.now(),
           success: true,
         ));
@@ -216,6 +230,7 @@ class TransferProvider extends ChangeNotifier {
     _speedBytesPerSec = 0;
     _errorMessage = null;
     _completedFiles = [];
+    _completedPaths = [];
     _hasIncomingRequest = false;
     _incomingAccepted = false;
     _incomingFromDevice = null;

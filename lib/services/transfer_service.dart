@@ -135,6 +135,11 @@ class TransferService {
       final fileCount = _readUint32(await reader.readBytes(4));
       print('[Dropix] 📦 Expecting $fileCount file(s)');
 
+      // Read sender device name
+      final dnLen = _readUint16(await reader.readBytes(2));
+      final senderDeviceName = utf8.decode(await reader.readBytes(dnLen));
+      print('[Dropix] 📱 Sender: $senderDeviceName');
+
       // Read all file names and sizes
       final fileNames = <String>[];
       final fileSizes = <int>[];
@@ -150,14 +155,8 @@ class TransferService {
       // Notify UI and wait for user decision
       _acceptCompleter = Completer<bool>();
 
-      // Strip IPv6-mapped IPv4 prefix (::ffff:192.168.x.x → 192.168.x.x)
-      var senderAddr = socket.remoteAddress.address;
-      if (senderAddr.startsWith('::ffff:')) {
-        senderAddr = senderAddr.substring(7);
-      }
-
       _incomingController.add(TransferStarted(
-        deviceName: senderAddr,
+        deviceName: senderDeviceName,
         fileNames: fileNames,
         fileSizes: fileSizes,
       ));
@@ -256,6 +255,7 @@ class TransferService {
     required String host,
     required int port,
     required List<dynamic> files,
+    required String deviceName,
   }) async* {
     Socket? socket;
     _SocketReader? reader;
@@ -282,6 +282,13 @@ class TransferService {
       header.addByte(_kVersion);
       header.add(_uint32Bytes(files.length));
       socket.add(header.toBytes());
+
+      // Send sender device name
+      final deviceNameBytes = utf8.encode(deviceName);
+      final dnHeader = BytesBuilder();
+      dnHeader.add(_uint16Bytes(deviceNameBytes.length));
+      dnHeader.add(deviceNameBytes);
+      socket.add(dnHeader.toBytes());
 
       // Send all file names + sizes
       for (final file in files) {
