@@ -10,7 +10,12 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.initialize();
+  try {
+    await NotificationService.initialize();
+  } catch (e) {
+    debugPrint('Notification init failed: $e');
+    // continue anyway
+  }
   runApp(const DropixApp());
 }
 

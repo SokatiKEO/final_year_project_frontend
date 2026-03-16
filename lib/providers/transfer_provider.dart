@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../models/discovered_device.dart';
 import '../models/transfer_file.dart';
 import '../models/transfer_record.dart';
+import '../services/background_service.dart';
 import '../services/history_service.dart';
 import '../services/transfer_service.dart';
 
@@ -14,6 +15,7 @@ enum TransferPhase { idle, connecting, transferring, done, error }
 class TransferProvider extends ChangeNotifier {
   final TransferService _service = TransferService();
   final HistoryService _history = HistoryService();
+  final BackgroundService _bg = BackgroundService();
 
   TransferPhase _phase = TransferPhase.idle;
   String? _currentFileName;
@@ -53,6 +55,8 @@ class TransferProvider extends ChangeNotifier {
 
   Future<void> initialize() async {
     await _service.startServer();
+    await _bg.initialize();
+    await _bg.requestPermissions();
 
     _service.incomingEvents.listen((event) {
       if (event is TransferStarted) {
@@ -68,11 +72,13 @@ class TransferProvider extends ChangeNotifier {
         onIncomingRequest?.call();
 
       } else if (event is TransferProgress) {
-        if (!_incomingAccepted) return; // ignore if not accepted yet
+        if (!_incomingAccepted) return;
         _phase = TransferPhase.transferring;
         _currentFileName = event.fileName;
         _progress = event.percent;
         _speedBytesPerSec = event.speedBytesPerSec;
+        final pct = (event.percent * 100).toStringAsFixed(0);
+        _bg.updateProgress('Receiving ${event.fileName} · $pct%');
         notifyListeners();
 
       } else if (event is TransferFileComplete) {
@@ -83,6 +89,7 @@ class TransferProvider extends ChangeNotifier {
         _phase = TransferPhase.done;
         _hasIncomingRequest = false;
         _progress = 1.0;
+        _bg.stopTransfer();
         _history.save(TransferRecord(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           direction: TransferDirection.received,
@@ -98,6 +105,7 @@ class TransferProvider extends ChangeNotifier {
         _phase = TransferPhase.error;
         _errorMessage = event.message;
         _hasIncomingRequest = false;
+        _bg.stopTransfer();
         notifyListeners();
       }
     });
@@ -107,7 +115,8 @@ class TransferProvider extends ChangeNotifier {
   void acceptIncoming() {
     _incomingAccepted = true;
     _phase = TransferPhase.transferring;
-    _service.acceptTransfer(); // Signal the TCP server to proceed
+    _service.acceptTransfer();
+    _bg.startTransfer('Receiving files from ${_incomingFromDevice ?? 'device'}…');
     notifyListeners();
   }
 
@@ -133,6 +142,7 @@ class TransferProvider extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
 
+    await _bg.startTransfer('Connecting to ${device.name}…');
     await _sub?.cancel();
 
     _sub = _service
@@ -143,11 +153,14 @@ class TransferProvider extends ChangeNotifier {
         _currentFileName = event.fileName;
         _progress = event.percent;
         _speedBytesPerSec = event.speedBytesPerSec;
+        final pct = (event.percent * 100).toStringAsFixed(0);
+        _bg.updateProgress('Sending ${event.fileName} · $pct%');
       } else if (event is TransferFileComplete) {
         _completedFiles.add(event.fileName);
       } else if (event is TransferComplete) {
         _phase = TransferPhase.done;
         _progress = 1.0;
+        _bg.stopTransfer();
         _history.save(TransferRecord(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           direction: TransferDirection.sent,
@@ -160,12 +173,14 @@ class TransferProvider extends ChangeNotifier {
       } else if (event is TransferError) {
         _phase = TransferPhase.error;
         _errorMessage = event.message;
+        _bg.stopTransfer();
       }
       notifyListeners();
     });
   }
 
   void reset() {
+    _bg.stopTransfer();
     _phase = TransferPhase.idle;
     _progress = 0;
     _currentFileName = null;

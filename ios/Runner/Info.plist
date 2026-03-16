@@ -29,6 +29,13 @@
     <key>NSDocumentsFolderUsageDescription</key>
     <string>Dropix needs access to your documents to send files.</string>
 
+    <!-- background task -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+        <string>processing</string>
+    </array>
+
     <!-- ── Standard Flutter entries ── -->
     <key>CFBundleDevelopmentRegion</key>
     <string>$(DEVELOPMENT_LANGUAGE)</string>
