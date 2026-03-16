@@ -19,7 +19,12 @@ abstract class TransferEvent {}
 class TransferStarted extends TransferEvent {
   final String deviceName;
   final List<String> fileNames;
-  TransferStarted({required this.deviceName, required this.fileNames});
+  final List<int> fileSizes;
+  TransferStarted({
+    required this.deviceName,
+    required this.fileNames,
+    required this.fileSizes,
+  });
 }
 
 class TransferProgress extends TransferEvent {
@@ -108,13 +113,16 @@ class TransferService {
       final fileCount = _readUint32(await reader.readBytes(4));
       print('[Dropix] 📦 Expecting $fileCount file(s)');
 
-      // Read all file names
+      // Read all file names and sizes
       final fileNames = <String>[];
+      final fileSizes = <int>[];
       for (int i = 0; i < fileCount; i++) {
         final nameLen = _readUint16(await reader.readBytes(2));
         final name = utf8.decode(await reader.readBytes(nameLen));
+        final size = _readUint64(await reader.readBytes(8));
         fileNames.add(name);
-        print('[Dropix] 📄 File $i: $name');
+        fileSizes.add(size);
+        print('[Dropix] 📄 File $i: $name ($size bytes)');
       }
 
       // Notify UI and wait for user decision
@@ -122,6 +130,7 @@ class TransferService {
       _incomingController.add(TransferStarted(
         deviceName: socket.remoteAddress.address,
         fileNames: fileNames,
+        fileSizes: fileSizes,
       ));
 
       final accepted = await _acceptCompleter!.future.timeout(
@@ -146,10 +155,6 @@ class TransferService {
       }
 
       _incomingController.add(TransferComplete());
-      NotificationService.showTransferComplete(
-        fileCount: fileNames.length,
-        deviceName: socket.remoteAddress.address,
-      );
       print('[Dropix] ✅ All files received');
     } catch (e) {
       print('[Dropix] ❌ Receive error: $e');
@@ -239,6 +244,7 @@ class TransferService {
       yield TransferStarted(
         deviceName: host,
         fileNames: files.map((f) => f.name as String).toList(),
+        fileSizes: files.map((f) => (f as dynamic).sizeBytes as int).toList(),
       );
 
       // ── Send magic + version + file count ─────────────────────────────────
@@ -248,12 +254,14 @@ class TransferService {
       header.add(_uint32Bytes(files.length));
       socket.add(header.toBytes());
 
-      // ── Send all file names ───────────────────────────────────────────────
+      // ── Send all file names + sizes ───────────────────────────────────────
       for (final file in files) {
         final nameBytes = utf8.encode(file.name as String);
+        final fileSize = await File(file.path as String).length();
         final nameHeader = BytesBuilder();
         nameHeader.add(_uint16Bytes(nameBytes.length));
         nameHeader.add(nameBytes);
+        nameHeader.add(_uint64Bytes(fileSize));
         socket.add(nameHeader.toBytes());
       }
       await socket.flush();

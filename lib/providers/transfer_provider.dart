@@ -5,12 +5,15 @@ import 'package:flutter/foundation.dart';
 
 import '../models/discovered_device.dart';
 import '../models/transfer_file.dart';
+import '../models/transfer_record.dart';
+import '../services/history_service.dart';
 import '../services/transfer_service.dart';
 
 enum TransferPhase { idle, connecting, transferring, done, error }
 
 class TransferProvider extends ChangeNotifier {
   final TransferService _service = TransferService();
+  final HistoryService _history = HistoryService();
 
   TransferPhase _phase = TransferPhase.idle;
   String? _currentFileName;
@@ -24,6 +27,7 @@ class TransferProvider extends ChangeNotifier {
   bool _hasIncomingRequest = false;
   String? _incomingFromDevice;
   List<String> _incomingFileNames = [];
+  List<int> _incomingFileSizes = [];
   bool _incomingAccepted = false;
 
   // Callback — home screen listens to this to show the bottom sheet
@@ -39,6 +43,7 @@ class TransferProvider extends ChangeNotifier {
   List<String> get completedFiles => _completedFiles;
   String? get incomingFromDevice => _incomingFromDevice;
   List<String> get incomingFileNames => _incomingFileNames;
+  List<int> get incomingFileSizes => _incomingFileSizes;
 
   String get speedLabel {
     if (_speedBytesPerSec < 1024) return '${_speedBytesPerSec.toStringAsFixed(0)} B/s';
@@ -55,6 +60,7 @@ class TransferProvider extends ChangeNotifier {
         _incomingAccepted = false;
         _incomingFromDevice = event.deviceName;
         _incomingFileNames = event.fileNames;
+        _incomingFileSizes = event.fileSizes;
         _phase = TransferPhase.connecting;
         notifyListeners();
 
@@ -77,6 +83,15 @@ class TransferProvider extends ChangeNotifier {
         _phase = TransferPhase.done;
         _hasIncomingRequest = false;
         _progress = 1.0;
+        _history.save(TransferRecord(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          direction: TransferDirection.received,
+          deviceName: _incomingFromDevice ?? 'Unknown',
+          fileNames: List.from(_completedFiles),
+          fileSizes: List.from(_incomingFileSizes),
+          completedAt: DateTime.now(),
+          success: true,
+        ));
         notifyListeners();
 
       } else if (event is TransferError) {
@@ -102,8 +117,9 @@ class TransferProvider extends ChangeNotifier {
     _incomingAccepted = false;
     _incomingFromDevice = null;
     _incomingFileNames = [];
+    _incomingFileSizes = [];
     _phase = TransferPhase.idle;
-    _service.declineTransfer(); // Signal the TCP server to reject
+    _service.declineTransfer();
     notifyListeners();
   }
 
@@ -132,6 +148,15 @@ class TransferProvider extends ChangeNotifier {
       } else if (event is TransferComplete) {
         _phase = TransferPhase.done;
         _progress = 1.0;
+        _history.save(TransferRecord(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          direction: TransferDirection.sent,
+          deviceName: device.name,
+          fileNames: files.map((f) => f.name).toList(),
+          fileSizes: files.map((f) => f.sizeBytes).toList(),
+          completedAt: DateTime.now(),
+          success: true,
+        ));
       } else if (event is TransferError) {
         _phase = TransferPhase.error;
         _errorMessage = event.message;
@@ -151,6 +176,7 @@ class TransferProvider extends ChangeNotifier {
     _incomingAccepted = false;
     _incomingFromDevice = null;
     _incomingFileNames = [];
+    _incomingFileSizes = [];
     notifyListeners();
   }
 

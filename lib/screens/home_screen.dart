@@ -12,6 +12,7 @@ import '../providers/transfer_provider.dart';
 import 'receive_screen.dart';
 import 'connect_screen.dart';
 import 'send_screen.dart';
+import 'history_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -152,6 +153,38 @@ class _AppBar extends StatelessWidget {
           ),
           Row(
             children: [
+              const SizedBox(width: 10),
+              // History button
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const HistoryScreen()),
+                ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0E1422),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white.withOpacity(0.07)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.history_rounded,
+                          color: Color(0xFF00E5C0), size: 15),
+                      SizedBox(width: 5),
+                      Text(
+                        'History',
+                        style: TextStyle(
+                          color: Color(0xFF00E5C0),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               // Connect manually button
               GestureDetector(
                 onTap: () => Navigator.push(
