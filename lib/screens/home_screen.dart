@@ -37,9 +37,14 @@ class _HomeScreenState extends State<HomeScreen>
 
     // Register callback to show receive sheet when incoming transfer arrives
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<TransferProvider>().onIncomingRequest = () {
+      final provider = context.read<TransferProvider>();
+      provider.onIncomingRequest = () {
         if (mounted) ReceiveSheet.show(context);
       };
+      // If a transfer request arrived before this screen was ready, show now
+      if (provider.hasIncomingRequest && mounted) {
+        ReceiveSheet.show(context);
+      }
     });
 
     // Auto-start discovery when screen loads

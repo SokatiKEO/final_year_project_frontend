@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:network_info_plus/network_info_plus.dart';
 import 'package:nsd/nsd.dart';
 import 'package:uuid/uuid.dart';
 import '../models/discovered_device.dart';
@@ -18,7 +17,6 @@ class DiscoveryService {
   factory DiscoveryService() => _instance;
   DiscoveryService._internal();
 
-  // Keyed by deviceId — guarantees no duplicates
   final Map<String, DiscoveredDevice> _devices = {};
   final _devicesController =
       StreamController<List<DiscoveredDevice>>.broadcast();
@@ -50,25 +48,22 @@ class DiscoveryService {
     _clearDevices();
   }
 
-  /// Full restart — wipes devices, waits for OS to release mDNS, starts fresh.
   Future<void> restart() async {
     print('[Dropix] 🔄 Restarting discovery...');
-    // 1. Force stop everything
     _isRunning = false;
     await _stopDiscovery();
     await _unregisterOurService();
-    // 2. Wipe device list so UI shows empty, not stale duplicates
     _clearDevices();
-    // 3. Wait for OS to fully release mDNS socket
     await Future.delayed(const Duration(milliseconds: 800));
-    // 4. Start fresh
     await start();
   }
 
   void _clearDevices() {
     _devices.clear();
-    _pushUpdate(); // Immediately push empty list to UI
+    _pushUpdate();
   }
+
+  // ── Identity ───────────────────────────────────────────────────────────────
 
   Future<void> _resolveLocalIdentity() async {
     _localDeviceId ??= const Uuid().v4();
@@ -79,10 +74,21 @@ class DiscoveryService {
     } else if (Platform.isIOS) {
       final ios = await info.iosInfo;
       _localDeviceName = ios.name;
+    } else if (Platform.isWindows) {
+      final windows = await info.windowsInfo;
+      _localDeviceName = windows.computerName;
+    } else if (Platform.isMacOS) {
+      final macos = await info.macOsInfo;
+      _localDeviceName = macos.computerName;
+    } else if (Platform.isLinux) {
+      final linux = await info.linuxInfo;
+      _localDeviceName = linux.prettyName;
     } else {
       _localDeviceName = 'Unknown Device';
     }
   }
+
+  // ── mDNS ──────────────────────────────────────────────────────────────────
 
   Future<void> _registerOurService() async {
     final serviceName = '$_localDeviceId|$_localDeviceName';
@@ -90,7 +96,13 @@ class DiscoveryService {
         ? 'android'
         : Platform.isIOS
             ? 'ios'
-            : 'other';
+            : Platform.isWindows
+                ? 'windows'
+                : Platform.isMacOS
+                    ? 'macos'
+                    : Platform.isLinux
+                        ? 'linux'
+                        : 'other';
     try {
       _registration = await register(
         Service(
@@ -151,8 +163,6 @@ class DiscoveryService {
 
   Future<void> _onServiceFound(Service service) async {
     final name = service.name ?? '';
-
-    // Skip our own service
     if (_localDeviceId != null && name.startsWith(_localDeviceId!)) return;
 
     final parts = name.split('|');
@@ -170,19 +180,8 @@ class DiscoveryService {
       return;
     }
 
-    // If device already exists with same id, just update timestamp — no duplicate
-    if (_devices.containsKey(deviceId)) {
-      print('[Dropix] 🔁 Device already known: $deviceName — skipping');
-      return;
-    }
-
-    // Also check for duplicate by host IP (same device, different uuid edge case)
-    final duplicateByHost =
-        _devices.values.any((d) => d.host == host && d.port == port);
-    if (duplicateByHost) {
-      print('[Dropix] 🔁 Duplicate host detected: $host — skipping');
-      return;
-    }
+    if (_devices.containsKey(deviceId)) return;
+    if (_devices.values.any((d) => d.host == host && d.port == port)) return;
 
     final device = DiscoveredDevice(
       id: deviceId,
@@ -195,8 +194,7 @@ class DiscoveryService {
 
     _devices[deviceId] = device;
     _pushUpdate();
-    print(
-        '[Dropix] 📱 Found device: ${device.name} @ ${device.host}:${device.port}');
+    print('[Dropix] 📱 Found via mDNS: ${device.name} @ ${device.host}:${device.port}');
   }
 
   void _onServiceLost(Service service) {
@@ -211,9 +209,6 @@ class DiscoveryService {
 
   Future<String?> _resolveHost(Service service) async {
     try {
-      final networkInfo = NetworkInfo();
-      final wifiIP = await networkInfo.getWifiIP();
-      if (wifiIP == null) return null;
       final hostname = service.host;
       if (hostname != null) {
         final addresses = await InternetAddress.lookup(hostname);
@@ -224,6 +219,8 @@ class DiscoveryService {
       return null;
     }
   }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   void _pushUpdate() {
     if (!_devicesController.isClosed) {

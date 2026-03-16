@@ -32,8 +32,7 @@ class TransferProgress extends TransferEvent {
   final int bytesTransferred;
   final int totalBytes;
   final double speedBytesPerSec;
-  double get percent =>
-      totalBytes == 0 ? 0 : bytesTransferred / totalBytes;
+  double get percent => totalBytes == 0 ? 0 : bytesTransferred / totalBytes;
   TransferProgress({
     required this.fileName,
     required this.bytesTransferred,
@@ -62,37 +61,56 @@ class TransferService {
   factory TransferService() => _instance;
   TransferService._internal();
 
-  ServerSocket? _server;
+  ServerSocket? _serverV4;
+  ServerSocket? _serverV6;
   bool _isListening = false;
 
-  final _incomingController =
-      StreamController<TransferEvent>.broadcast();
+  final _incomingController = StreamController<TransferEvent>.broadcast();
   Stream<TransferEvent> get incomingEvents => _incomingController.stream;
   bool get isListening => _isListening;
 
   Completer<bool>? _acceptCompleter;
 
   // ── SERVER ────────────────────────────────────────────────────────────────
+  // Bind on BOTH IPv4 and IPv6 so Windows (which may connect via either)
+  // always reaches the Android receiver.
 
   Future<void> startServer() async {
     if (_isListening) return;
     try {
-      _server = await ServerSocket.bind(
+      // IPv4
+      _serverV4 = await ServerSocket.bind(
         InternetAddress.anyIPv4,
         kTransferPort,
         shared: true,
       );
-      _isListening = true;
-      print('[Dropix] 🖥️ Server listening on port $kTransferPort');
-      _server!.listen(_handleIncomingConnection);
+      _serverV4!.listen(_handleIncomingConnection);
+      print('[Dropix] 🖥️ Server listening on IPv4 port $kTransferPort');
     } catch (e) {
-      print('[Dropix] ❌ Failed to start server: $e');
+      print('[Dropix] ⚠️ IPv4 bind failed: $e');
     }
+
+    try {
+      // IPv6 (also accepts IPv4-mapped addresses on most OSes)
+      _serverV6 = await ServerSocket.bind(
+        InternetAddress.anyIPv6,
+        kTransferPort,
+        shared: true,
+      );
+      _serverV6!.listen(_handleIncomingConnection);
+      print('[Dropix] 🖥️ Server listening on IPv6 port $kTransferPort');
+    } catch (e) {
+      print('[Dropix] ⚠️ IPv6 bind failed (non-fatal): $e');
+    }
+
+    _isListening = _serverV4 != null || _serverV6 != null;
   }
 
   Future<void> stopServer() async {
-    await _server?.close();
-    _server = null;
+    await _serverV4?.close();
+    await _serverV6?.close();
+    _serverV4 = null;
+    _serverV6 = null;
     _isListening = false;
   }
 
@@ -127,8 +145,15 @@ class TransferService {
 
       // Notify UI and wait for user decision
       _acceptCompleter = Completer<bool>();
+
+      // Strip IPv6-mapped IPv4 prefix (::ffff:192.168.x.x → 192.168.x.x)
+      var senderAddr = socket.remoteAddress.address;
+      if (senderAddr.startsWith('::ffff:')) {
+        senderAddr = senderAddr.substring(7);
+      }
+
       _incomingController.add(TransferStarted(
-        deviceName: socket.remoteAddress.address,
+        deviceName: senderAddr,
         fileNames: fileNames,
         fileSizes: fileSizes,
       ));
@@ -150,8 +175,8 @@ class TransferService {
 
       // Receive file data
       final saveDir = await _getSaveDirectory();
-      for (final fileName in fileNames) {
-        await _receiveFileData(reader, socket, fileName, saveDir);
+      for (int i = 0; i < fileNames.length; i++) {
+        await _receiveFileData(reader, socket, fileNames[i], fileSizes[i], saveDir);
       }
 
       _incomingController.add(TransferComplete());
@@ -170,10 +195,9 @@ class TransferService {
     _SocketReader reader,
     Socket socket,
     String fileName,
+    int fileSize,
     Directory saveDir,
   ) async {
-    // Read file size
-    final fileSize = _readUint64(await reader.readBytes(8));
     print('[Dropix] 📥 Receiving "$fileName" ($fileSize bytes)');
 
     final outFile = _uniqueFile(saveDir, fileName);
@@ -185,8 +209,9 @@ class TransferService {
     int lastTime = 0;
 
     while (received < fileSize) {
-      final toRead =
-          (fileSize - received) < _kChunkSize ? (fileSize - received) : _kChunkSize;
+      final toRead = (fileSize - received) < _kChunkSize
+          ? (fileSize - received)
+          : _kChunkSize;
       final chunk = await reader.readBytes(toRead);
       sink.add(chunk);
       received += chunk.length;
@@ -210,7 +235,6 @@ class TransferService {
     await sink.flush();
     await sink.close();
 
-    // ACK this file
     socket.add([0x01]);
     await socket.flush();
 
@@ -234,10 +258,10 @@ class TransferService {
     try {
       print('[Dropix] 📤 Connecting to $host:$port');
       socket = await Socket.connect(
-        host, port,
+        host,
+        port,
         timeout: const Duration(seconds: 10),
       );
-      // Use a shared reader so ACK bytes aren't lost
       reader = _SocketReader(socket);
 
       print('[Dropix] 🔗 Connected');
@@ -247,14 +271,14 @@ class TransferService {
         fileSizes: files.map((f) => (f as dynamic).sizeBytes as int).toList(),
       );
 
-      // ── Send magic + version + file count ─────────────────────────────────
+      // Send magic + version + file count
       final header = BytesBuilder();
       header.add(_kMagic);
       header.addByte(_kVersion);
       header.add(_uint32Bytes(files.length));
       socket.add(header.toBytes());
 
-      // ── Send all file names + sizes ───────────────────────────────────────
+      // Send all file names + sizes
       for (final file in files) {
         final nameBytes = utf8.encode(file.name as String);
         final fileSize = await File(file.path as String).length();
@@ -267,7 +291,7 @@ class TransferService {
       await socket.flush();
       print('[Dropix] 📋 Sent ${files.length} filename(s), waiting for accept...');
 
-      // ── Wait for accept/decline via shared reader ─────────────────────────
+      // Wait for accept/decline
       final ackBytes = await reader.readBytes(1).timeout(
         const Duration(seconds: 35),
         onTimeout: () => throw TimeoutException('No response from receiver'),
@@ -279,7 +303,6 @@ class TransferService {
       }
       print('[Dropix] ✅ Accepted — streaming files');
 
-      // ── Send each file ────────────────────────────────────────────────────
       for (final file in files) {
         yield* _sendFileData(socket, reader, file);
       }
@@ -306,11 +329,6 @@ class TransferService {
 
     print('[Dropix] 📤 Sending "$fileName" ($fileSize bytes)');
 
-    // Send file size
-    socket.add(_uint64Bytes(fileSize));
-    await socket.flush();
-
-    // Stream file data
     int sent = 0;
     final sw = Stopwatch()..start();
     int lastBytes = 0;
@@ -338,7 +356,6 @@ class TransferService {
     await socket.flush();
     print('[Dropix] ✅ Sent "$fileName", waiting for ACK');
 
-    // Wait for per-file ACK via shared reader (not socket.first!)
     final ack = await reader.readBytes(1).timeout(
       const Duration(seconds: 15),
       onTimeout: () => throw TimeoutException('ACK timeout'),
@@ -387,8 +404,15 @@ class TransferService {
     } else if (Platform.isIOS) {
       final docs = await getApplicationDocumentsDirectory();
       base = Directory('${docs.path}/Dropix');
+    } else if (Platform.isWindows) {
+      final home = Platform.environment['USERPROFILE'] ?? 'C:\\Users\\Public';
+      base = Directory('$home\\Downloads\\Dropix');
+    } else if (Platform.isMacOS) {
+      final home = Platform.environment['HOME'] ?? '/tmp';
+      base = Directory('$home/Downloads/Dropix');
     } else {
-      base = Directory('/tmp/Dropix');
+      final home = Platform.environment['HOME'] ?? '/tmp';
+      base = Directory('$home/Downloads/Dropix');
     }
     if (!await base.exists()) await base.create(recursive: true);
     return base;
@@ -422,8 +446,6 @@ class TransferService {
 }
 
 // ── Socket Reader ─────────────────────────────────────────────────────────────
-// Buffers ALL incoming bytes from the socket into a single queue.
-// This prevents bytes being lost when switching between reads.
 
 class _SocketReader {
   final _buffer = <int>[];
@@ -435,7 +457,6 @@ class _SocketReader {
     _sub = socket.listen(
       (data) {
         _buffer.addAll(data);
-        // Wake up anyone waiting for data
         for (final w in _waiters) {
           if (!w.isCompleted) w.complete();
         }

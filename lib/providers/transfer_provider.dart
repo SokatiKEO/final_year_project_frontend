@@ -8,6 +8,7 @@ import '../models/transfer_file.dart';
 import '../models/transfer_record.dart';
 import '../services/background_service.dart';
 import '../services/history_service.dart';
+import '../services/notification_service.dart';
 import '../services/transfer_service.dart';
 
 enum TransferPhase { idle, connecting, transferring, done, error }
@@ -33,7 +34,17 @@ class TransferProvider extends ChangeNotifier {
   bool _incomingAccepted = false;
 
   // Callback — home screen listens to this to show the bottom sheet
-  VoidCallback? onIncomingRequest;
+  VoidCallback? _onIncomingRequest;
+  bool _pendingIncomingRequest = false;
+
+  VoidCallback? get onIncomingRequest => _onIncomingRequest;
+  set onIncomingRequest(VoidCallback? cb) {
+    _onIncomingRequest = cb;
+    if (cb != null && _pendingIncomingRequest) {
+      _pendingIncomingRequest = false;
+      Future.microtask(() => cb());
+    }
+  }
 
   TransferPhase get phase => _phase;
   bool get isTransferring => _phase == TransferPhase.transferring;
@@ -65,11 +76,15 @@ class TransferProvider extends ChangeNotifier {
         _incomingFromDevice = event.deviceName;
         _incomingFileNames = event.fileNames;
         _incomingFileSizes = event.fileSizes;
+        _completedFiles = []; // ← reset from any previous transfer
         _phase = TransferPhase.connecting;
         notifyListeners();
 
-        // Trigger the bottom sheet on the home screen
-        onIncomingRequest?.call();
+        if (_onIncomingRequest != null) {
+          Future.microtask(() => _onIncomingRequest?.call());
+        } else {
+          _pendingIncomingRequest = true;
+        }
 
       } else if (event is TransferProgress) {
         if (!_incomingAccepted) return;
@@ -90,6 +105,12 @@ class TransferProvider extends ChangeNotifier {
         _hasIncomingRequest = false;
         _progress = 1.0;
         _bg.stopTransfer();
+        // ── Notify user ───────────────────────────────────────────────────
+        NotificationService.showTransferComplete(
+          fileCount: _completedFiles.length,
+          deviceName: _incomingFromDevice ?? 'device',
+          isSend: false,
+        );
         _history.save(TransferRecord(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           direction: TransferDirection.received,
@@ -127,6 +148,7 @@ class TransferProvider extends ChangeNotifier {
     _incomingFromDevice = null;
     _incomingFileNames = [];
     _incomingFileSizes = [];
+    _pendingIncomingRequest = false;
     _phase = TransferPhase.idle;
     _service.declineTransfer();
     notifyListeners();
@@ -161,6 +183,12 @@ class TransferProvider extends ChangeNotifier {
         _phase = TransferPhase.done;
         _progress = 1.0;
         _bg.stopTransfer();
+        // ── Notify user ───────────────────────────────────────────────────
+        NotificationService.showTransferComplete(
+          fileCount: _completedFiles.length,
+          deviceName: device.name,
+          isSend: true,
+        );
         _history.save(TransferRecord(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           direction: TransferDirection.sent,
@@ -192,6 +220,7 @@ class TransferProvider extends ChangeNotifier {
     _incomingFromDevice = null;
     _incomingFileNames = [];
     _incomingFileSizes = [];
+    _pendingIncomingRequest = false;
     notifyListeners();
   }
 
