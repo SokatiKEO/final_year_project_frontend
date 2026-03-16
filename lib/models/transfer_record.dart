@@ -8,9 +8,11 @@ class TransferRecord {
   final String deviceName;
   final List<String> fileNames;
   final List<int> fileSizes;
+  final List<String> filePaths;
   final DateTime completedAt;
   final bool success;
   final String? errorMessage;
+  final String? saveFolderPath;
 
   const TransferRecord({
     required this.id,
@@ -18,9 +20,11 @@ class TransferRecord {
     required this.deviceName,
     required this.fileNames,
     required this.fileSizes,
+    this.filePaths = const [],
     required this.completedAt,
     required this.success,
     this.errorMessage,
+    this.saveFolderPath,
   });
 
   int get totalBytes => fileSizes.fold(0, (a, b) => a + b);
@@ -51,9 +55,11 @@ class TransferRecord {
         'deviceName': deviceName,
         'fileNames': fileNames,
         'fileSizes': fileSizes,
+        'filePaths': filePaths,
         'completedAt': completedAt.toIso8601String(),
         'success': success,
         'errorMessage': errorMessage,
+        'saveFolderPath': saveFolderPath,
       };
 
   factory TransferRecord.fromJson(Map<String, dynamic> json) => TransferRecord(
@@ -62,8 +68,12 @@ class TransferRecord {
         deviceName: json['deviceName'] as String,
         fileNames: List<String>.from(json['fileNames'] as List),
         fileSizes: List<int>.from(json['fileSizes'] as List),
+        filePaths: json['filePaths'] != null
+            ? List<String>.from(json['filePaths'] as List)
+            : [],
         completedAt: DateTime.parse(json['completedAt'] as String),
         success: json['success'] as bool,
         errorMessage: json['errorMessage'] as String?,
+        saveFolderPath: json['saveFolderPath'] as String?,
       );
 }

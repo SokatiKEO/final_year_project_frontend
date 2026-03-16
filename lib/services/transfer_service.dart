@@ -64,6 +64,10 @@ class TransferService {
   ServerSocket? _serverV4;
   ServerSocket? _serverV6;
   bool _isListening = false;
+  String? _lastSaveDirectoryPath;
+
+  /// The folder path where the last batch of received files was saved.
+  String? get saveDirectoryPath => _lastSaveDirectoryPath;
 
   final _incomingController = StreamController<TransferEvent>.broadcast();
   Stream<TransferEvent> get incomingEvents => _incomingController.stream;
@@ -175,6 +179,7 @@ class TransferService {
 
       // Receive file data
       final saveDir = await _getSaveDirectory();
+      _lastSaveDirectoryPath = saveDir.path;
       for (int i = 0; i < fileNames.length; i++) {
         await _receiveFileData(reader, socket, fileNames[i], fileSizes[i], saveDir);
       }

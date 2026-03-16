@@ -1,6 +1,9 @@
 // lib/screens/history_screen.dart
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
 
 import '../models/transfer_record.dart';
 import '../services/history_service.dart';
@@ -134,18 +137,35 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   final records = snap.data ?? [];
 
                   if (records.isEmpty) {
-                    return const _EmptyState();
+                    return RefreshIndicator(
+                      onRefresh: () async => _reload(),
+                      color: const Color(0xFF3D7BFF),
+                      backgroundColor: const Color(0xFF0E1422),
+                      child: ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: const [
+                          SizedBox(height: 180),
+                          _EmptyState(),
+                        ],
+                      ),
+                    );
                   }
 
-                  return ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                    itemCount: records.length,
-                    itemBuilder: (context, index) => _RecordCard(
-                      record: records[index],
-                      onDelete: () async {
-                        await _service.deleteRecord(records[index].id);
-                        _reload();
-                      },
+                  return RefreshIndicator(
+                    onRefresh: () async => _reload(),
+                    color: const Color(0xFF3D7BFF),
+                    backgroundColor: const Color(0xFF0E1422),
+                    child: ListView.builder(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                      itemCount: records.length,
+                      itemBuilder: (context, index) => _RecordCard(
+                        record: records[index],
+                        onDelete: () async {
+                          await _service.deleteRecord(records[index].id);
+                          _reload();
+                        },
+                      ),
                     ),
                   );
                 },
@@ -330,6 +350,30 @@ class _RecordDetailSheet extends StatelessWidget {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)}GB';
   }
 
+  /// Opens the save folder in the OS file manager / Files app.
+  Future<void> _openFile(BuildContext context, String filePath) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      _showSnack(context, 'File no longer exists.');
+      return;
+    }
+    final result = await OpenFilex.open(filePath);
+    if (result.type != ResultType.done) {
+      _showSnack(context, 'No app found to open this file.');
+    }
+  }
+
+  void _showSnack(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontSize: 13)),
+        backgroundColor: const Color(0xFF1E2940),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isSent = record.direction == TransferDirection.sent;
@@ -364,7 +408,7 @@ class _RecordDetailSheet extends StatelessWidget {
 
             // Header
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
               child: Row(
                 children: [
                   Container(
@@ -429,49 +473,70 @@ class _RecordDetailSheet extends StatelessWidget {
               ),
             ),
 
+            // Divider
+            Container(
+              height: 1,
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              color: Colors.white.withOpacity(0.05),
+            ),
+            const SizedBox(height: 4),
+
             // File list
             Expanded(
               child: ListView.builder(
                 controller: controller,
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                 itemCount: record.fileNames.length,
                 itemBuilder: (_, i) {
                   final name = record.fileNames[i];
                   final size =
                       i < record.fileSizes.length ? record.fileSizes[i] : 0;
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF141929),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: Colors.white.withOpacity(0.06)),
-                    ),
-                    child: Row(
-                      children: [
-                        Text(_emojiForFile(name),
-                            style: const TextStyle(fontSize: 20)),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            name,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
+                  final path =
+                      i < record.filePaths.length ? record.filePaths[i] : null;
+                  final canOpen = path != null && File(path).existsSync();
+                  return GestureDetector(
+                    onTap: canOpen ? () => _openFile(context, path!) : null,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF141929),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: canOpen
+                                ? Colors.white.withOpacity(0.1)
+                                : Colors.white.withOpacity(0.06)),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(_emojiForFile(name),
+                              style: const TextStyle(fontSize: 20)),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              name,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _sizeLabel(size),
-                          style: const TextStyle(
-                              color: Color(0xFF5A6580), fontSize: 11),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          Text(
+                            _sizeLabel(size),
+                            style: const TextStyle(
+                                color: Color(0xFF5A6580), fontSize: 11),
+                          ),
+                          if (canOpen) ...[
+                            const SizedBox(width: 8),
+                            const Icon(Icons.open_in_new_rounded,
+                                size: 13, color: Color(0xFF5A6580)),
+                          ],
+                        ],
+                      ),
                     ),
                   );
                 },

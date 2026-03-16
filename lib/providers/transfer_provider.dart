@@ -119,6 +119,7 @@ class TransferProvider extends ChangeNotifier {
           fileSizes: List.from(_incomingFileSizes),
           completedAt: DateTime.now(),
           success: true,
+          saveFolderPath: _service.saveDirectoryPath,
         ));
         notifyListeners();
 
