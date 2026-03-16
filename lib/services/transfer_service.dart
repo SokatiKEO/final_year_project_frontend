@@ -146,6 +146,10 @@ class TransferService {
       }
 
       _incomingController.add(TransferComplete());
+      NotificationService.showTransferComplete(
+        fileCount: fileNames.length,
+        deviceName: socket.remoteAddress.address,
+      );
       print('[Dropix] ✅ All files received');
     } catch (e) {
       print('[Dropix] ❌ Receive error: $e');
