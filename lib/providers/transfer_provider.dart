@@ -62,8 +62,10 @@ class TransferProvider extends ChangeNotifier {
   List<int> get incomingFileSizes => _incomingFileSizes;
 
   String get speedLabel {
-    if (_speedBytesPerSec < 1024) return '${_speedBytesPerSec.toStringAsFixed(0)} B/s';
-    if (_speedBytesPerSec < 1024 * 1024) return '${(_speedBytesPerSec / 1024).toStringAsFixed(1)} KB/s';
+    if (_speedBytesPerSec < 1024)
+      return '${_speedBytesPerSec.toStringAsFixed(0)} B/s';
+    if (_speedBytesPerSec < 1024 * 1024)
+      return '${(_speedBytesPerSec / 1024).toStringAsFixed(1)} KB/s';
     return '${(_speedBytesPerSec / (1024 * 1024)).toStringAsFixed(1)} MB/s';
   }
 
@@ -74,6 +76,7 @@ class TransferProvider extends ChangeNotifier {
 
     _service.incomingEvents.listen((event) {
       if (event is TransferStarted) {
+        if (_phase == TransferPhase.done || _phase == TransferPhase.transferring) return;
         _hasIncomingRequest = true;
         _incomingAccepted = false;
         _incomingFromDevice = event.deviceName;
@@ -89,7 +92,6 @@ class TransferProvider extends ChangeNotifier {
         } else {
           _pendingIncomingRequest = true;
         }
-
       } else if (event is TransferProgress) {
         if (!_incomingAccepted) return;
         _phase = TransferPhase.transferring;
@@ -99,12 +101,10 @@ class TransferProvider extends ChangeNotifier {
         final pct = (event.percent * 100).toStringAsFixed(0);
         _bg.updateProgress('Receiving ${event.fileName} · $pct%');
         notifyListeners();
-
       } else if (event is TransferFileComplete) {
         _completedFiles.add(event.fileName);
         _completedPaths.add(event.savedPath);
         notifyListeners();
-
       } else if (event is TransferComplete) {
         _phase = TransferPhase.done;
         _hasIncomingRequest = false;
@@ -128,7 +128,6 @@ class TransferProvider extends ChangeNotifier {
           saveFolderPath: _service.saveDirectoryPath,
         ));
         notifyListeners();
-
       } else if (event is TransferError) {
         _phase = TransferPhase.error;
         _errorMessage = event.message;
@@ -144,7 +143,8 @@ class TransferProvider extends ChangeNotifier {
     _incomingAccepted = true;
     _phase = TransferPhase.transferring;
     _service.acceptTransfer();
-    _bg.startTransfer('Receiving files from ${_incomingFromDevice ?? 'device'}…');
+    _bg.startTransfer(
+        'Receiving files from ${_incomingFromDevice ?? 'device'}…');
     notifyListeners();
   }
 
@@ -177,11 +177,11 @@ class TransferProvider extends ChangeNotifier {
 
     _sub = _service
         .sendFiles(
-          host: device.host,
-          port: device.port,
-          files: files,
-          deviceName: DiscoveryService().localDeviceName ?? Platform.localHostname,
-        )
+      host: device.host,
+      port: device.port,
+      files: files,
+      deviceName: DiscoveryService().localDeviceName ?? Platform.localHostname,
+    )
         .listen((event) {
       if (event is TransferProgress) {
         _phase = TransferPhase.transferring;

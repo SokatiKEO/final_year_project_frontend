@@ -1,5 +1,7 @@
 // lib/models/discovered_device.dart
 
+import 'package:flutter/material.dart';
+
 /// Represents a Dropix device discovered on the local network via mDNS.
 class DiscoveredDevice {
   final String id;         // Unique device ID (from mDNS service name)
@@ -18,15 +20,14 @@ class DiscoveredDevice {
     required this.discoveredAt,
   });
 
-  /// Device emoji icon based on platform
-  String get icon {
+  /// Material icon based on platform
+  IconData get platformIcon {
     switch (platform.toLowerCase()) {
       case 'ios':
-        return '📱';
       case 'android':
-        return '📲';
+        return Icons.smartphone;
       default:
-        return '💻';
+        return Icons.laptop;
     }
   }
 

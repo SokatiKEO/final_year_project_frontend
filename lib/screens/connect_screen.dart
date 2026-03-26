@@ -1,8 +1,5 @@
 // lib/screens/connect_screen.dart
-//
-// Fallback connection screen with two options:
-//  1. Show MY QR code (other device scans it to connect)
-//  2. Scan another device's QR code
+import 'dart:io';
 //  3. Manual IP input
 import 'dart:io';
 import 'dart:convert';
@@ -31,7 +28,9 @@ class _ConnectScreenState extends State<ConnectScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    final isDesktop =
+        Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    _tabs = TabController(length: isDesktop ? 2 : 3, vsync: this);
     _fetchMyIp();
   }
 
@@ -121,10 +120,13 @@ class _ConnectScreenState extends State<ConnectScreen>
                   fontWeight: FontWeight.w600,
                 ),
                 dividerColor: Colors.transparent,
-                tabs: const [
-                  Tab(text: 'My QR'),
-                  Tab(text: 'Scan QR'),
-                  Tab(text: 'Manual IP'),
+                tabs: [
+                  const Tab(text: 'My QR'),
+                  if (!Platform.isWindows &&
+                      !Platform.isMacOS &&
+                      !Platform.isLinux)
+                    const Tab(text: 'Scan QR'),
+                  const Tab(text: 'Manual IP'),
                 ],
               ),
             ),
@@ -143,10 +145,13 @@ class _ConnectScreenState extends State<ConnectScreen>
                     deviceName: deviceName,
                   ),
 
-                  // Tab 2 — Scan QR
-                  _ScanQrTab(onDeviceFound: _navigateToSend),
+                  // Tab 2 — Scan QR (mobile only)
+                  if (!Platform.isWindows &&
+                      !Platform.isMacOS &&
+                      !Platform.isLinux)
+                    _ScanQrTab(onDeviceFound: _navigateToSend),
 
-                  // Tab 3 — Manual IP
+                  // Tab 3 (or 2 on desktop) — Manual IP
                   _ManualIpTab(onConnect: _navigateToSend),
                 ],
               ),

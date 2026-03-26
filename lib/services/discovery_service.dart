@@ -207,13 +207,19 @@ class DiscoveryService {
     }
   }
 
-  Future<String?> _resolveHost(Service service) async {
+    Future<String?> _resolveHost(Service service) async {
     try {
       final hostname = service.host;
-      if (hostname != null) {
-        final addresses = await InternetAddress.lookup(hostname);
-        if (addresses.isNotEmpty) return addresses.first.address;
-      }
+      if (hostname == null) return null;
+ 
+      // If it's already an IP address, return it directly
+      if (RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(hostname)) return hostname;
+ 
+      // Resolve mDNS hostname to IP
+      final addresses = await InternetAddress.lookup(hostname);
+      final ipv4 = addresses.where((a) => a.type == InternetAddressType.IPv4);
+      if (ipv4.isNotEmpty) return ipv4.first.address;
+      if (addresses.isNotEmpty) return addresses.first.address;
       return null;
     } catch (_) {
       return null;

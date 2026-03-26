@@ -1,7 +1,6 @@
 // lib/screens/home_screen.dart
-//
-// The main screen — shows the radar animation and list of nearby devices.
-// Wired to DiscoveryProvider so it rebuilds when devices are found/lost.
+
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -9,10 +8,14 @@ import 'package:provider/provider.dart';
 import '../models/discovered_device.dart';
 import '../providers/discovery_provider.dart';
 import '../providers/transfer_provider.dart';
+import '../models/transfer_file.dart';
 import 'receive_screen.dart';
 import 'connect_screen.dart';
 import 'send_screen.dart';
 import 'history_screen.dart';
+
+bool get _isDesktop =>
+    Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,33 +24,27 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late AnimationController _radarController;
 
   @override
   void initState() {
     super.initState();
-
-    // Radar pulse animation
     _radarController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat();
 
-    // Register callback to show receive sheet when incoming transfer arrives
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<TransferProvider>();
       provider.onIncomingRequest = () {
         if (mounted) ReceiveSheet.show(context);
       };
-      // If a transfer request arrived before this screen was ready, show now
       if (provider.hasIncomingRequest && mounted) {
         ReceiveSheet.show(context);
       }
     });
 
-    // Auto-start discovery when screen loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) context.read<DiscoveryProvider>().startScanning();
@@ -74,14 +71,12 @@ class _HomeScreenState extends State<HomeScreen>
               backgroundColor: const Color(0xFF0E1422),
               child: CustomScrollView(
                 slivers: [
-                  // ── App Bar ──────────────────────────────────────────────
                   SliverToBoxAdapter(
                     child: _AppBar(
                       deviceName: provider.localDeviceName ?? 'My Device',
                     ),
                   ),
 
-                  // ── Radar / Scanning indicator ───────────────────────────
                   SliverToBoxAdapter(
                     child: _RadarWidget(
                       controller: _radarController,
@@ -90,13 +85,12 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
 
-                  // ── Error message ─────────────────────────────────────────
+                  // Drag & drop zone — desktop only, now lives in SendScreen
                   if (provider.state == DiscoveryState.error)
                     SliverToBoxAdapter(
                       child: _ErrorBanner(message: provider.errorMessage),
                     ),
 
-                  // ── Section header ────────────────────────────────────────
                   SliverToBoxAdapter(
                     child: _SectionHeader(
                       title: 'Nearby Devices',
@@ -104,10 +98,10 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
 
-                  // ── Device list ───────────────────────────────────────────
                   provider.devices.isEmpty
                       ? SliverToBoxAdapter(
-                          child: _EmptyState(isScanning: provider.isScanning),
+                          child:
+                              _EmptyState(isScanning: provider.isScanning),
                         )
                       : SliverList(
                           delegate: SliverChildBuilderDelegate(
@@ -129,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 }
 
-// ── Sub-widgets ──────────────────────────────────────────────────────────────
+// ── App Bar ───────────────────────────────────────────────────────────────────
 
 class _AppBar extends StatelessWidget {
   final String deviceName;
@@ -159,18 +153,20 @@ class _AppBar extends StatelessWidget {
           Row(
             children: [
               const SizedBox(width: 10),
-              // History button
+              // History
               GestureDetector(
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const HistoryScreen()),
                 ),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: const Color(0xFF0E1422),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.white.withOpacity(0.07)),
+                    border:
+                        Border.all(color: Colors.white.withOpacity(0.07)),
                   ),
                   child: const Row(
                     children: [
@@ -190,29 +186,32 @@ class _AppBar extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              // Connect manually button
+              // Connect
               GestureDetector(
                 onTap: () => Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const ConnectScreen(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const ConnectScreen()),
                 ),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: const Color(0xFF0E1422),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: Colors.white.withOpacity(0.07),
-                    ),
+                        color: Colors.white.withOpacity(0.07)),
                   ),
-                  child: const Row(
+                  child: Row(
                     children: [
-                      Icon(Icons.qr_code_rounded,
-                          color: Color(0xFF3D7BFF), size: 15),
-                      SizedBox(width: 5),
-                      Text(
+                      Icon(
+                        _isDesktop
+                            ? Icons.lan_rounded
+                            : Icons.qr_code_rounded,
+                        color: const Color(0xFF3D7BFF),
+                        size: 15,
+                      ),
+                      const SizedBox(width: 5),
+                      const Text(
                         'Connect',
                         style: TextStyle(
                           color: Color(0xFF3D7BFF),
@@ -237,7 +236,9 @@ class _AppBar extends StatelessWidget {
                 ),
                 child: Center(
                   child: Text(
-                    deviceName.isNotEmpty ? deviceName[0].toUpperCase() : 'D',
+                    deviceName.isNotEmpty
+                        ? deviceName[0].toUpperCase()
+                        : 'D',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -253,6 +254,9 @@ class _AppBar extends StatelessWidget {
     );
   }
 }
+
+
+// ── Radar ─────────────────────────────────────────────────────────────────────
 
 class _RadarWidget extends StatelessWidget {
   final AnimationController controller;
@@ -277,14 +281,12 @@ class _RadarWidget extends StatelessWidget {
             child: Stack(
               alignment: Alignment.center,
               children: [
-                // Animated pulse rings
                 if (isScanning) ...[
                   for (int i = 0; i < 3; i++)
                     AnimatedBuilder(
                       animation: controller,
                       builder: (_, __) {
-                        final progress =
-                            (controller.value + i * 0.33) % 1.0;
+                        final progress = (controller.value + i * 0.33) % 1.0;
                         return Opacity(
                           opacity: (1.0 - progress).clamp(0, 1),
                           child: Container(
@@ -302,8 +304,6 @@ class _RadarWidget extends StatelessWidget {
                       },
                     ),
                 ],
-
-                // Center icon
                 Container(
                   width: 80,
                   height: 80,
@@ -323,7 +323,11 @@ class _RadarWidget extends StatelessWidget {
                     ],
                   ),
                   child: const Center(
-                    child: Text('📡', style: TextStyle(fontSize: 32)),
+                    child: Icon(
+                      Icons.wifi_tethering_rounded,
+                      size: 32,
+                      color: Color(0xFF3D7BFF),
+                    ),
                   ),
                 ),
               ],
@@ -346,6 +350,8 @@ class _RadarWidget extends StatelessWidget {
     );
   }
 }
+
+// ── Section header ────────────────────────────────────────────────────────────
 
 class _SectionHeader extends StatelessWidget {
   final String title;
@@ -370,7 +376,8 @@ class _SectionHeader extends StatelessWidget {
           if (count > 0) ...[
             const SizedBox(width: 8),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
                 color: const Color(0xFF3D7BFF).withOpacity(0.15),
                 borderRadius: BorderRadius.circular(8),
@@ -391,6 +398,8 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+// ── Device card ───────────────────────────────────────────────────────────────
+
 class _DeviceCard extends StatelessWidget {
   final DiscoveredDevice device;
   const _DeviceCard({required this.device});
@@ -400,26 +409,19 @@ class _DeviceCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       child: GestureDetector(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => SendScreen(device: device),
-            ),
-          );
-        },
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => SendScreen(device: device)),
+        ),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: const Color(0xFF0E1422),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.07),
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.07)),
           ),
           child: Row(
             children: [
-              // Icon
               Container(
                 width: 44,
                 height: 44,
@@ -433,15 +435,14 @@ class _DeviceCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Center(
-                  child: Text(
-                    device.icon,
-                    style: const TextStyle(fontSize: 22),
+                  child: Icon(
+                    device.platformIcon,
+                    size: 22,
+                    color: const Color(0xFF3D7BFF),
                   ),
                 ),
               ),
               const SizedBox(width: 14),
-
-              // Info
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -465,8 +466,6 @@ class _DeviceCard extends StatelessWidget {
                   ],
                 ),
               ),
-
-              // Online dot
               Container(
                 width: 8,
                 height: 8,
@@ -489,6 +488,8 @@ class _DeviceCard extends StatelessWidget {
   }
 }
 
+// ── Empty state ───────────────────────────────────────────────────────────────
+
 class _EmptyState extends StatelessWidget {
   final bool isScanning;
   const _EmptyState({required this.isScanning});
@@ -499,25 +500,18 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.all(40),
       child: Column(
         children: [
-          const Text('🌐', style: TextStyle(fontSize: 40)),
+          const Icon(Icons.devices_rounded,
+              size: 40, color: Color(0xFF3A4460)),
           const SizedBox(height: 14),
           Text(
-            isScanning
-                ? 'Looking for nearby devices...'
-                : 'No devices found',
-            style: const TextStyle(
-              color: Color(0xFF5A6580),
-              fontSize: 14,
-            ),
+            isScanning ? 'Looking for nearby devices...' : 'No devices found',
+            style: const TextStyle(color: Color(0xFF5A6580), fontSize: 14),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 6),
           const Text(
             'Make sure both devices are on the\nsame WiFi network.',
-            style: TextStyle(
-              color: Color(0xFF3A4460),
-              fontSize: 12,
-            ),
+            style: TextStyle(color: Color(0xFF3A4460), fontSize: 12),
             textAlign: TextAlign.center,
           ),
         ],
@@ -525,6 +519,8 @@ class _EmptyState extends StatelessWidget {
     );
   }
 }
+
+// ── Error banner ──────────────────────────────────────────────────────────────
 
 class _ErrorBanner extends StatelessWidget {
   final String? message;
@@ -538,21 +534,18 @@ class _ErrorBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFF5C87).withOpacity(0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: const Color(0xFFFF5C87).withOpacity(0.3),
-        ),
+        border:
+            Border.all(color: const Color(0xFFFF5C87).withOpacity(0.3)),
       ),
       child: Row(
         children: [
-          const Text('⚠️', style: TextStyle(fontSize: 16)),
+          const Icon(Icons.warning_amber_rounded,
+              color: Color(0xFFFF5C87), size: 16),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               message ?? 'Discovery error. Pull to refresh.',
-              style: const TextStyle(
-                color: Color(0xFFFF5C87),
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: Color(0xFFFF5C87), fontSize: 12),
             ),
           ),
         ],

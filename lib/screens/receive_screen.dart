@@ -26,12 +26,12 @@ class ReceiveSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<TransferProvider>(
       builder: (context, provider, _) {
-        if (provider.phase == TransferPhase.done ||
-            provider.phase == TransferPhase.error) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (Navigator.canPop(context)) Navigator.pop(context);
-          });
-        }
+        // if (provider.phase == TransferPhase.done ||
+        //     provider.phase == TransferPhase.error) {
+        //   WidgetsBinding.instance.addPostFrameCallback((_) {
+        //     if (Navigator.canPop(context)) Navigator.pop(context);
+        //   });
+        // }
 
         // Lock drag during active transfer so it can't be accidentally dismissed
         final isTransferring = provider.phase == TransferPhase.transferring;
@@ -49,7 +49,8 @@ class ReceiveSheet extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
             child: switch (provider.phase) {
               TransferPhase.connecting => _IncomingRequest(provider: provider),
-              TransferPhase.transferring => _ReceivingProgress(provider: provider),
+              TransferPhase.transferring =>
+                _ReceivingProgress(provider: provider),
               TransferPhase.done => _ReceiveDone(provider: provider),
               TransferPhase.error => _ReceiveError(provider: provider),
               _ => const SizedBox.shrink(),
@@ -334,8 +335,7 @@ class _FilePreviewCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: const Color(0xFF0E1422),
                       borderRadius: BorderRadius.circular(10),
-                      border:
-                          Border.all(color: Colors.white.withOpacity(0.07)),
+                      border: Border.all(color: Colors.white.withOpacity(0.07)),
                     ),
                     child: Center(
                       child: Text(
@@ -403,7 +403,6 @@ class _ReceivingProgress extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         const _Handle(),
-
         const Text(
           '📥  Receiving...',
           style: TextStyle(
@@ -418,9 +417,7 @@ class _ReceivingProgress extends StatelessWidget {
           style: const TextStyle(color: Color(0xFF5A6580), fontSize: 13),
           overflow: TextOverflow.ellipsis,
         ),
-
         const SizedBox(height: 24),
-
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
@@ -465,8 +462,7 @@ class _ReceivingProgress extends StatelessWidget {
                 child: LinearProgressIndicator(
                   value: provider.progress,
                   backgroundColor: Colors.white.withOpacity(0.05),
-                  valueColor:
-                      const AlwaysStoppedAnimation(Color(0xFF3D7BFF)),
+                  valueColor: const AlwaysStoppedAnimation(Color(0xFF3D7BFF)),
                   minHeight: 8,
                 ),
               ),
@@ -476,22 +472,20 @@ class _ReceivingProgress extends StatelessWidget {
                 children: [
                   Text(
                     provider.speedLabel,
-                    style: const TextStyle(
-                        color: Color(0xFF5A6580), fontSize: 11),
+                    style:
+                        const TextStyle(color: Color(0xFF5A6580), fontSize: 11),
                   ),
                   Text(
                     '${provider.completedFiles.length} done',
-                    style: const TextStyle(
-                        color: Color(0xFF5A6580), fontSize: 11),
+                    style:
+                        const TextStyle(color: Color(0xFF5A6580), fontSize: 11),
                   ),
                 ],
               ),
             ],
           ),
         ),
-
         const SizedBox(height: 20),
-
         GestureDetector(
           onTap: () {
             provider.reset();

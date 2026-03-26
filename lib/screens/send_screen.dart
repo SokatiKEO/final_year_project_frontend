@@ -1,6 +1,7 @@
 // lib/screens/send_screen.dart
 
 import 'dart:io';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -12,7 +13,8 @@ import 'progress_screen.dart';
 
 class SendScreen extends StatefulWidget {
   final DiscoveredDevice device;
-  const SendScreen({super.key, required this.device});
+  final List<TransferFile> initialFiles;
+  const SendScreen({super.key, required this.device, this.initialFiles = const []});
 
   @override
   State<SendScreen> createState() => _SendScreenState();
@@ -21,6 +23,25 @@ class SendScreen extends StatefulWidget {
 class _SendScreenState extends State<SendScreen> {
   final List<TransferFile> _selectedFiles = [];
   bool _picking = false;
+  bool _dropHovering = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialFiles.isNotEmpty) {
+      _selectedFiles.addAll(widget.initialFiles);
+    }
+  }
+
+  Future<void> _onDropped(List<String> paths) async {
+    for (final path in paths) {
+      final f = File(path);
+      if (await f.exists()) {
+        final tf = await TransferFile.fromFile(f);
+        if (mounted) setState(() => _selectedFiles.add(tf));
+      }
+    }
+  }
 
   int get _totalBytes =>
       _selectedFiles.fold(0, (sum, f) => sum + f.sizeBytes);
@@ -67,7 +88,10 @@ class _SendScreenState extends State<SendScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final isDesktop =
+        Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
+    final scaffold = Scaffold(
       backgroundColor: const Color(0xFF080C14),
       body: SafeArea(
         child: Column(
@@ -130,9 +154,10 @@ class _SendScreenState extends State<SendScreen> {
                 ),
                 child: Row(
                   children: [
-                    Text(
-                      widget.device.icon,
-                      style: const TextStyle(fontSize: 26),
+                    Icon(
+                      widget.device.platformIcon,
+                      size: 26,
+                      color: const Color(0xFF3D7BFF),
                     ),
                     const SizedBox(width: 12),
                     Column(
@@ -259,6 +284,50 @@ class _SendScreenState extends State<SendScreen> {
               ),
           ],
         ),
+      ),
+    );
+
+    if (!isDesktop) return scaffold;
+
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _dropHovering = true),
+      onDragExited: (_) => setState(() => _dropHovering = false),
+      onDragDone: (details) {
+        setState(() => _dropHovering = false);
+        _onDropped(details.files.map((f) => f.path).toList());
+      },
+      child: Stack(
+        children: [
+          scaffold,
+          if (_dropHovering)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3D7BFF).withOpacity(0.12),
+                  border: Border.all(
+                    color: const Color(0xFF3D7BFF).withOpacity(0.6),
+                    width: 2,
+                  ),
+                ),
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.upload_file_rounded,
+                        size: 48, color: Color(0xFF3D7BFF)),
+                    SizedBox(height: 12),
+                    Text(
+                      'Drop to add files',
+                      style: TextStyle(
+                        color: Color(0xFF3D7BFF),
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

@@ -5,8 +5,15 @@ import 'package:provider/provider.dart';
 
 import '../providers/transfer_provider.dart';
 
-class ProgressScreen extends StatelessWidget {
+class ProgressScreen extends StatefulWidget {
   const ProgressScreen({super.key});
+
+  @override
+  State<ProgressScreen> createState() => _ProgressScreenState();
+}
+
+class _ProgressScreenState extends State<ProgressScreen> {
+  TransferPhase? _lastStablePhase;
 
   @override
   Widget build(BuildContext context) {
@@ -15,10 +22,18 @@ class ProgressScreen extends StatelessWidget {
       body: SafeArea(
         child: Consumer<TransferProvider>(
           builder: (context, provider, _) {
-            return switch (provider.phase) {
-              TransferPhase.done    => _DoneView(provider: provider),
-              TransferPhase.error   => _ErrorView(provider: provider),
-              _                     => _TransferringView(provider: provider),
+            // Latch onto done/error — never go back to transferring once reached
+            if (provider.phase == TransferPhase.done ||
+                provider.phase == TransferPhase.error) {
+              _lastStablePhase = provider.phase;
+            }
+
+            final displayPhase = _lastStablePhase ?? provider.phase;
+
+            return switch (displayPhase) {
+              TransferPhase.done => _DoneView(provider: provider),
+              TransferPhase.error => _ErrorView(provider: provider),
+              _ => _TransferringView(provider: provider),
             };
           },
         ),
@@ -44,8 +59,9 @@ class _TransferringViewState extends State<_TransferringView>
   @override
   void initState() {
     super.initState();
-    _spin = AnimationController(vsync: this, duration: const Duration(seconds: 2))
-      ..repeat();
+    _spin =
+        AnimationController(vsync: this, duration: const Duration(seconds: 2))
+          ..repeat();
   }
 
   @override
@@ -67,14 +83,16 @@ class _TransferringViewState extends State<_TransferringView>
 
           // ── Spinning animation ─────────────────────────────────────────────
           SizedBox(
-            width: 130, height: 130,
+            width: 130,
+            height: 130,
             child: Stack(
               alignment: Alignment.center,
               children: [
                 RotationTransition(
                   turns: _spin,
                   child: Container(
-                    width: 130, height: 130,
+                    width: 130,
+                    height: 130,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
@@ -82,13 +100,18 @@ class _TransferringViewState extends State<_TransferringView>
                         width: 2,
                       ),
                       gradient: const SweepGradient(
-                        colors: [Color(0xFF3D7BFF), Color(0xFF00E5C0), Colors.transparent],
+                        colors: [
+                          Color(0xFF3D7BFF),
+                          Color(0xFF00E5C0),
+                          Colors.transparent
+                        ],
                       ),
                     ),
                   ),
                 ),
                 Container(
-                  width: 90, height: 90,
+                  width: 90,
+                  height: 90,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: const Color(0xFF0E1422),
@@ -106,7 +129,8 @@ class _TransferringViewState extends State<_TransferringView>
 
           const Text(
             'Transferring...',
-            style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
+            style: TextStyle(
+                color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
           Text(
@@ -132,7 +156,10 @@ class _TransferringViewState extends State<_TransferringView>
                   children: [
                     Text(
                       p.currentFileName ?? '',
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600),
                       overflow: TextOverflow.ellipsis,
                     ),
                     ShaderMask(
@@ -195,7 +222,8 @@ class _TransferringViewState extends State<_TransferringView>
               child: const Center(
                 child: Text(
                   'Cancel Transfer',
-                  style: TextStyle(color: Color(0xFF5A6580), fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                      color: Color(0xFF5A6580), fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -220,16 +248,23 @@ class _DoneView extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            width: 90, height: 90,
+            width: 90,
+            height: 90,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: const Color(0xFF00E5C0).withOpacity(0.1),
-              border: Border.all(color: const Color(0xFF00E5C0).withOpacity(0.4)),
+              border:
+                  Border.all(color: const Color(0xFF00E5C0).withOpacity(0.4)),
             ),
-            child: const Center(child: Text('✅', style: TextStyle(fontSize: 36))),
+            child:
+                const Center(child: Text('✅', style: TextStyle(fontSize: 36))),
           ),
           const SizedBox(height: 20),
-          const Text('Transfer Complete!', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+          const Text('Transfer Complete!',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Text(
             '${provider.completedFiles.length} file${provider.completedFiles.length == 1 ? '' : 's'} sent successfully',
@@ -253,7 +288,10 @@ class _DoneView extends StatelessWidget {
               child: const Center(
                 child: Text(
                   'Done',
-                  style: TextStyle(color: Colors.black, fontSize: 15, fontWeight: FontWeight.w800),
+                  style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800),
                 ),
               ),
             ),
@@ -279,7 +317,11 @@ class _ErrorView extends StatelessWidget {
         children: [
           const Text('❌', style: TextStyle(fontSize: 56)),
           const SizedBox(height: 20),
-          const Text('Transfer Failed', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+          const Text('Transfer Failed',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Text(
             provider.errorMessage ?? 'Unknown error',
@@ -301,7 +343,9 @@ class _ErrorView extends StatelessWidget {
                 border: Border.all(color: Colors.white.withOpacity(0.1)),
               ),
               child: const Center(
-                child: Text('Go Back', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                child: Text('Go Back',
+                    style: TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w600)),
               ),
             ),
           ),
@@ -330,9 +374,14 @@ class _StatCard extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Text(value, style: const TextStyle(color: Color(0xFF3D7BFF), fontSize: 15, fontWeight: FontWeight.w700)),
+            Text(value,
+                style: const TextStyle(
+                    color: Color(0xFF3D7BFF),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700)),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(color: Color(0xFF5A6580), fontSize: 10)),
+            Text(label,
+                style: const TextStyle(color: Color(0xFF5A6580), fontSize: 10)),
           ],
         ),
       ),
