@@ -48,7 +48,9 @@ class ReceiveSheet extends StatelessWidget {
             ),
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
             child: switch (provider.phase) {
-              TransferPhase.connecting => _IncomingRequest(provider: provider),
+              TransferPhase.connecting => provider.isWaitingForRelay
+                  ? const _WaitingForSender()
+                  : _IncomingRequest(provider: provider),
               TransferPhase.transferring =>
                 _ReceivingProgress(provider: provider),
               TransferPhase.done => _ReceiveDone(provider: provider),
@@ -58,6 +60,48 @@ class ReceiveSheet extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+
+// ── 0. Waiting for relay sender ───────────────────────────────────────────────
+
+class _WaitingForSender extends StatelessWidget {
+  const _WaitingForSender();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _Handle(),
+        const SizedBox(height: 8),
+        const CircularProgressIndicator(
+          color: Color(0xFF3D7BFF),
+          strokeWidth: 2,
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Waiting for sender...',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Connected to relay. The file request will\nappear when the sender taps Send.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.4),
+            fontSize: 13,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 24),
+      ],
     );
   }
 }

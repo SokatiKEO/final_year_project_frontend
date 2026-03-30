@@ -1,7 +1,5 @@
 // lib/screens/connect_screen.dart
 import 'dart:io';
-//  3. Manual IP input
-import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -10,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../models/discovered_device.dart';
 import '../providers/discovery_provider.dart';
+import 'relay_screen.dart';
 import 'send_screen.dart';
 
 class ConnectScreen extends StatefulWidget {
@@ -30,7 +29,7 @@ class _ConnectScreenState extends State<ConnectScreen>
     super.initState();
     final isDesktop =
         Platform.isWindows || Platform.isMacOS || Platform.isLinux;
-    _tabs = TabController(length: isDesktop ? 2 : 3, vsync: this);
+    _tabs = TabController(length: isDesktop ? 3 : 4, vsync: this);
     _fetchMyIp();
   }
 
@@ -127,6 +126,7 @@ class _ConnectScreenState extends State<ConnectScreen>
                       !Platform.isLinux)
                     const Tab(text: 'Scan QR'),
                   const Tab(text: 'Manual IP'),
+                  const Tab(text: 'Online'),
                 ],
               ),
             ),
@@ -153,6 +153,9 @@ class _ConnectScreenState extends State<ConnectScreen>
 
                   // Tab 3 (or 2 on desktop) — Manual IP
                   _ManualIpTab(onConnect: _navigateToSend),
+
+                  // Tab 4 (or 3 on desktop) — Relay
+                  const _RelayTab(),
                 ],
               ),
             ),
@@ -165,7 +168,7 @@ class _ConnectScreenState extends State<ConnectScreen>
   void _navigateToSend(DiscoveredDevice device) {
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => SendScreen(device: device)),
+      MaterialPageRoute(builder: (_) => SendScreen(devices: [device])),
     );
   }
 }
@@ -386,7 +389,6 @@ class _ManualIpTab extends StatefulWidget {
 class _ManualIpTabState extends State<_ManualIpTab> {
   final _ipController = TextEditingController();
   final _portController = TextEditingController(text: '49152');
-  final _nameController = TextEditingController(text: 'Remote Device');
   bool _connecting = false;
   String? _error;
 
@@ -394,19 +396,31 @@ class _ManualIpTabState extends State<_ManualIpTab> {
   void dispose() {
     _ipController.dispose();
     _portController.dispose();
-    _nameController.dispose();
     super.dispose();
   }
 
   Future<void> _connect() async {
     final ip = _ipController.text.trim();
     final port = int.tryParse(_portController.text.trim()) ?? 49152;
-    final name = _nameController.text.trim();
 
     if (ip.isEmpty) {
       setState(() => _error = 'Please enter an IP address');
       return;
     }
+
+    // Check if this IP is already known via mDNS (before any async gap)
+    final knownDevice = context
+        .read<DiscoveryProvider>()
+        .devices
+        .firstWhere((d) => d.host == ip, orElse: () => DiscoveredDevice(
+              id: '',
+              name: '',
+              platform: 'unknown',
+              host: '',
+              port: 0,
+              discoveredAt: DateTime.now(),
+            ));
+    final mdnsName = knownDevice.host == ip ? knownDevice.name : null;
 
     setState(() {
       _connecting = true;
@@ -429,7 +443,7 @@ class _ManualIpTabState extends State<_ManualIpTab> {
 
     final device = DiscoveredDevice(
       id: 'manual-$ip',
-      name: name.isEmpty ? ip : name,
+      name: mdnsName ?? ip,
       platform: 'unknown',
       host: ip,
       port: port,
@@ -445,7 +459,7 @@ class _ManualIpTabState extends State<_ManualIpTab> {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           const Text(
             'Enter the IP address shown\non the other device\'s QR tab',
@@ -454,13 +468,6 @@ class _ManualIpTabState extends State<_ManualIpTab> {
           ),
           const SizedBox(height: 24),
 
-          _InputField(
-            label: 'Device Name (optional)',
-            controller: _nameController,
-            hint: 'e.g. John\'s Phone',
-            keyboardType: TextInputType.text,
-          ),
-          const SizedBox(height: 12),
           _InputField(
             label: 'IP Address',
             controller: _ipController,
@@ -535,7 +542,7 @@ class _ManualIpTabState extends State<_ManualIpTab> {
                         ),
                       )
                     : const Text(
-                        '⚡ Connect',
+                        'Connect',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 15,
@@ -636,6 +643,161 @@ class _InputField extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Tab 4: Relay ──────────────────────────────────────────────────────────────
+
+class _RelayTab extends StatelessWidget {
+  const _RelayTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        children: [
+          const Text(
+            'Transfer files without being\non the same WiFi network',
+            style:
+                TextStyle(color: Color(0xFF5A6580), fontSize: 13, height: 1.5),
+            textAlign: TextAlign.left,
+          ),
+          const SizedBox(height: 28),
+
+          // Feature cards
+          const _RelayFeatureCard(
+            emoji: '🌐',
+            title: 'Works anywhere',
+            description: 'Mobile data, different WiFi, VPN — no restrictions.',
+          ),
+          const SizedBox(height: 10),
+          const _RelayFeatureCard(
+            emoji: '🔒',
+            title: 'Room codes',
+            description:
+                'Share a 6-letter code with the other person to connect.',
+          ),
+          const SizedBox(height: 28),
+
+          // Launch button
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const RelayScreen()),
+            ),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(17),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFF5C87), Color(0xFFFF8C42)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFFF5C87).withOpacity(0.35),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: const Center(
+                child: Text(
+                  'Open Relay Connect',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // Note
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0E1422),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withOpacity(0.06)),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('💡', style: TextStyle(fontSize: 14)),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Use this when both devices aren\'t on the same WiFi. '
+                    'For local transfers, the radar on the home screen is faster.',
+                    style: TextStyle(
+                      color: Color(0xFF5A6580),
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RelayFeatureCard extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String description;
+
+  const _RelayFeatureCard({
+    required this.emoji,
+    required this.title,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1422),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withOpacity(0.07)),
+      ),
+      child: Row(
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 22)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: const TextStyle(
+                      color: Color(0xFF5A6580), fontSize: 12, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+// ignore: depend_on_referenced_packages
+
 import 'package:path_provider/path_provider.dart';
 
 const int kTransferPort = 49152;
@@ -249,7 +251,309 @@ class TransferService {
     print('[Dropix] ✅ Saved: ${outFile.path}');
   }
 
+  // ── RELAY RECEIVER ────────────────────────────────────────────────────────
+
+  /// Called on the receiver device after connecting to the relay WebSocket.
+  /// Treats the relay pipe exactly like a raw socket — reads the Dropix
+  /// binary protocol from [incoming] and writes ACKs back to [outgoing].
+  Future<void> receiveViaRelay({
+    required Stream<Uint8List> incoming,
+    required StreamController<Uint8List> outgoing,
+  }) async {
+    // Flatten the stream into a buffer so we can do readBytes() calls
+    final buffer = <int>[];
+    final waiters = <Completer<void>>[];
+    bool done = false;
+
+    final sub = incoming.listen(
+      (chunk) {
+        buffer.addAll(chunk);
+        for (final w in waiters) {
+          if (!w.isCompleted) w.complete();
+        }
+        waiters.clear();
+      },
+      onDone: () {
+        done = true;
+        for (final w in waiters) {
+          if (!w.isCompleted) w.complete();
+        }
+        waiters.clear();
+      },
+    );
+
+    Future<List<int>> readBytes(int count) async {
+      while (buffer.length < count) {
+        if (done) throw Exception('Relay closed (need $count, have ${buffer.length})');
+        final c = Completer<void>();
+        waiters.add(c);
+        await c.future;
+      }
+      final result = buffer.sublist(0, count);
+      buffer.removeRange(0, count);
+      return result;
+    }
+
+    void sendByte(int b) => outgoing.add(Uint8List.fromList([b]));
+
+    try {
+      // Reuse the existing protocol reader ─ magic, version, file count…
+      final magic = await readBytes(4);
+      if (!_listEquals(magic, _kMagic)) throw Exception('Not a Dropix relay sender');
+      final version = (await readBytes(1))[0];
+      if (version != _kVersion) throw Exception('Unsupported version');
+
+      final fileCount = _readUint32(await readBytes(4));
+
+      final dnLen = _readUint16(await readBytes(2));
+      final senderName = utf8.decode(await readBytes(dnLen));
+
+      final fileNames = <String>[];
+      final fileSizes = <int>[];
+      for (int i = 0; i < fileCount; i++) {
+        final nameLen = _readUint16(await readBytes(2));
+        final name = utf8.decode(await readBytes(nameLen));
+        final size = _readUint64(await readBytes(8));
+        fileNames.add(name);
+        fileSizes.add(size);
+      }
+
+      // Notify UI and wait for user decision (same as LAN path)
+      _acceptCompleter = Completer<bool>();
+      _incomingController.add(TransferStarted(
+        deviceName: senderName,
+        fileNames: fileNames,
+        fileSizes: fileSizes,
+      ));
+
+      final accepted = await _acceptCompleter!.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => false,
+      );
+
+      sendByte(accepted ? 0x01 : 0x00);
+      if (!accepted) { await sub.cancel(); return; }
+
+      final saveDir = await _getSaveDirectory();
+      _lastSaveDirectoryPath = saveDir.path;
+
+      for (int i = 0; i < fileNames.length; i++) {
+        final fileName = fileNames[i];
+        final fileSize = fileSizes[i];
+
+        final outFile = _uniqueFile(saveDir, fileName);
+        final sink = outFile.openWrite();
+        int received = 0;
+        final sw = Stopwatch()..start();
+        int lastBytes2 = 0;
+        int lastTime2 = 0;
+
+        while (received < fileSize) {
+          final toRead = (fileSize - received) < _kChunkSize
+              ? (fileSize - received)
+              : _kChunkSize;
+          final chunk = await readBytes(toRead);
+          sink.add(chunk);
+          received += chunk.length;
+
+          final now = sw.elapsedMilliseconds;
+          double speed = 0;
+          if (now - lastTime2 >= 500) {
+            speed = (received - lastBytes2) / ((now - lastTime2) / 1000);
+            lastBytes2 = received;
+            lastTime2 = now;
+          }
+          _incomingController.add(TransferProgress(
+            fileName: fileName,
+            bytesTransferred: received,
+            totalBytes: fileSize,
+            speedBytesPerSec: speed,
+          ));
+        }
+
+        await sink.flush();
+        await sink.close();
+        sendByte(0x01);
+
+        _incomingController.add(TransferFileComplete(
+          fileName: fileName,
+          savedPath: outFile.path,
+        ));
+      }
+
+      _incomingController.add(TransferComplete());
+    } catch (e) {
+      _incomingController.add(TransferError(e.toString()));
+    } finally {
+      await sub.cancel();
+      await outgoing.close();
+      _acceptCompleter = null;
+    }
+  }
+
   // ── CLIENT ────────────────────────────────────────────────────────────────
+
+  /// Send files through the backend WebSocket relay.
+  /// [backendBase] e.g. "https://web-production-04f9.up.railway.app"
+  /// [sessionId]  from POST /relay/session
+  Stream<TransferEvent> sendFilesViaRelay({
+    required String backendBase,
+    required String sessionId,
+    required List<dynamic> files,
+    required String deviceName,
+  }) async* {
+    // Convert http(s) → ws(s)
+    final wsBase = backendBase
+        .replaceFirst(RegExp(r'^https://'), 'wss://')
+        .replaceFirst(RegExp(r'^http://'), 'ws://');
+    final uri = Uri.parse('$wsBase/relay/ws/$sessionId/sender');
+
+    WebSocket? ws;
+    try {
+      print('[Dropix] 📤 Relay connecting to $uri');
+      ws = await WebSocket.connect(uri.toString());
+      ws!.pingInterval = const Duration(seconds: 20);
+      print('[Dropix] 🔗 Relay WS connected');
+
+      yield TransferStarted(
+        deviceName: deviceName,
+        fileNames: files.map((f) => f.name as String).toList(),
+        fileSizes: files.map((f) => (f as dynamic).sizeBytes as int).toList(),
+      );
+
+      // Buffer incoming data (ACKs from receiver) via a stream queue
+      final incoming = <int>[];
+      final waiters = <Completer<void>>[];
+      bool wsDone = false;
+
+      ws.listen(
+        (data) {
+          if (data is List<int>) incoming.addAll(data);
+          if (data is Uint8List) incoming.addAll(data);
+          for (final w in waiters) {
+            if (!w.isCompleted) w.complete();
+          }
+          waiters.clear();
+        },
+        onDone: () {
+          wsDone = true;
+          for (final w in waiters) {
+            if (!w.isCompleted) w.complete();
+          }
+          waiters.clear();
+        },
+      );
+
+      Future<List<int>> readBytes(int count) async {
+        while (incoming.length < count) {
+          if (wsDone) {
+            throw Exception('WS closed (need $count, have ${incoming.length})');
+          }
+          final c = Completer<void>();
+          waiters.add(c);
+          await c.future;
+        }
+        final result = incoming.sublist(0, count);
+        incoming.removeRange(0, count);
+        return result;
+      }
+
+      void sendBytes(List<int> bytes) => ws!.add(Uint8List.fromList(bytes));
+
+      // ── Build and send header ──────────────────────────────────────────────
+      final header = BytesBuilder();
+      header.add(_kMagic);
+      header.addByte(_kVersion);
+      header.add(_uint32Bytes(files.length));
+      sendBytes(header.toBytes());
+
+      final dnBytes = utf8.encode(deviceName);
+      final dnHeader = BytesBuilder();
+      dnHeader.add(_uint16Bytes(dnBytes.length));
+      dnHeader.add(dnBytes);
+      sendBytes(dnHeader.toBytes());
+
+      for (final file in files) {
+        final nameBytes = utf8.encode(file.name as String);
+        final fileSize = await File(file.path as String).length();
+        final nameHeader = BytesBuilder();
+        nameHeader.add(_uint16Bytes(nameBytes.length));
+        nameHeader.add(nameBytes);
+        nameHeader.add(_uint64Bytes(fileSize));
+        sendBytes(nameHeader.toBytes());
+      }
+
+      print('[Dropix] 📋 Relay: sent headers, waiting for accept...');
+
+      // ── Wait for accept/decline ────────────────────────────────────────────
+      final ack = await readBytes(1).timeout(
+        const Duration(seconds: 35),
+        onTimeout: () => throw TimeoutException('No accept from receiver'),
+      );
+      if (ack[0] != 0x01) {
+        yield TransferError('Receiver declined the transfer');
+        await ws.close();
+        return;
+      }
+      print('[Dropix] ✅ Relay: accepted — streaming files');
+
+      // ── Stream each file ───────────────────────────────────────────────────
+      for (final file in files) {
+        final ioFile = File(file.path as String);
+        final fileSize = await ioFile.length();
+        final fileName = file.name as String;
+
+        print('[Dropix] 📤 Relay sending "$fileName" ($fileSize bytes)');
+
+        int sent = 0;
+        final sw = Stopwatch()..start();
+        int lastBytes = 0;
+        int lastTime = 0;
+
+        await for (final chunk in ioFile.openRead()) {
+          sendBytes(chunk);
+          sent += chunk.length;
+
+          final now = sw.elapsedMilliseconds;
+          double speed = 0;
+          if (now - lastTime >= 500) {
+            speed = (sent - lastBytes) / ((now - lastTime) / 1000);
+            lastBytes = sent;
+            lastTime = now;
+          }
+
+          yield TransferProgress(
+            fileName: fileName,
+            bytesTransferred: sent,
+            totalBytes: fileSize,
+            speedBytesPerSec: speed,
+          );
+        }
+
+        print('[Dropix] ✅ Relay: sent "$fileName", waiting for ACK');
+
+        final fileAck = await readBytes(1).timeout(
+          const Duration(seconds: 15),
+          onTimeout: () => throw TimeoutException('File ACK timeout'),
+        );
+        if (fileAck[0] != 0x01) throw Exception('File rejected by receiver');
+
+        yield TransferFileComplete(
+          fileName: fileName,
+          savedPath: file.path as String,
+        );
+        print('[Dropix] ✅ Relay: ACK for "$fileName"');
+      }
+
+      yield TransferComplete();
+      print('[Dropix] ✅ Relay: all done');
+    } catch (e) {
+      print('[Dropix] ❌ Relay send error: $e');
+      yield TransferError(e.toString());
+    } finally {
+      await ws?.close();
+    }
+  }
 
   Stream<TransferEvent> sendFiles({
     required String host,

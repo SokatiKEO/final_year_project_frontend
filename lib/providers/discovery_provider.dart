@@ -33,7 +33,6 @@ class DiscoveryProvider extends ChangeNotifier with WidgetsBindingObserver {
         _restartAfterResume();
         break;
       case AppLifecycleState.paused:
-      case AppLifecycleState.inactive:
         print('[Dropix] 💤 App paused — stopping discovery');
         _service.stop();
         break;

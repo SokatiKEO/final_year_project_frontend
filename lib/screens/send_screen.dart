@@ -12,9 +12,14 @@ import '../providers/transfer_provider.dart';
 import 'progress_screen.dart';
 
 class SendScreen extends StatefulWidget {
-  final DiscoveredDevice device;
+  final List<DiscoveredDevice> devices;
   final List<TransferFile> initialFiles;
-  const SendScreen({super.key, required this.device, this.initialFiles = const []});
+
+  const SendScreen({
+    super.key,
+    required this.devices,
+    this.initialFiles = const [],
+  });
 
   @override
   State<SendScreen> createState() => _SendScreenState();
@@ -47,7 +52,8 @@ class _SendScreenState extends State<SendScreen> {
       _selectedFiles.fold(0, (sum, f) => sum + f.sizeBytes);
 
   String get _totalLabel {
-    if (_totalBytes < 1024 * 1024) return '${(_totalBytes / 1024).toStringAsFixed(1)} KB';
+    if (_totalBytes < 1024 * 1024)
+      return '${(_totalBytes / 1024).toStringAsFixed(1)} KB';
     return '${(_totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
@@ -76,7 +82,7 @@ class _SendScreenState extends State<SendScreen> {
     if (_selectedFiles.isEmpty) return;
 
     final provider = context.read<TransferProvider>();
-    await provider.sendFiles(device: widget.device, files: _selectedFiles);
+    await provider.sendFiles(devices: widget.devices, files: _selectedFiles);
 
     if (mounted) {
       Navigator.push(
@@ -90,6 +96,7 @@ class _SendScreenState extends State<SendScreen> {
   Widget build(BuildContext context) {
     final isDesktop =
         Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+    final isMulti = widget.devices.length > 1;
 
     final scaffold = Scaffold(
       backgroundColor: const Color(0xFF080C14),
@@ -97,7 +104,7 @@ class _SendScreenState extends State<SendScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Nav header ──────────────────────────────────────────────────
+            // ── Nav header ───────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
               child: Row(
@@ -105,7 +112,8 @@ class _SendScreenState extends State<SendScreen> {
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: Container(
-                      width: 36, height: 36,
+                      width: 36,
+                      height: 36,
                       decoration: BoxDecoration(
                         color: const Color(0xFF0E1422),
                         borderRadius: BorderRadius.circular(10),
@@ -135,59 +143,17 @@ class _SendScreenState extends State<SendScreen> {
 
             const SizedBox(height: 16),
 
-            // ── Sending to ──────────────────────────────────────────────────
+            // ── Sending to (single or multi) ─────────────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      const Color(0xFF3D7BFF).withOpacity(0.1),
-                      const Color(0xFF00E5C0).withOpacity(0.05),
-                    ],
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: const Color(0xFF3D7BFF).withOpacity(0.25),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      widget.device.platformIcon,
-                      size: 26,
-                      color: const Color(0xFF3D7BFF),
-                    ),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Sending to',
-                          style: TextStyle(
-                            color: Color(0xFF5A6580),
-                            fontSize: 11,
-                          ),
-                        ),
-                        Text(
-                          widget.device.name,
-                          style: const TextStyle(
-                            color: Color(0xFF3D7BFF),
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              child: isMulti
+                  ? _MultiDeviceChips(devices: widget.devices)
+                  : _SingleDeviceCard(device: widget.devices.first),
             ),
 
             const SizedBox(height: 20),
 
-            // ── Selected files list ─────────────────────────────────────────
+            // ── Selected files list ──────────────────────────────────────────
             Expanded(
               child: _selectedFiles.isEmpty
                   ? _EmptyPicker(onPick: _pickFiles, picking: _picking)
@@ -205,11 +171,10 @@ class _SendScreenState extends State<SendScreen> {
                         ),
                         const SizedBox(height: 10),
                         ..._selectedFiles.map((f) => _FileRow(
-                          file: f,
-                          onRemove: () => _removeFile(f),
-                        )),
+                              file: f,
+                              onRemove: () => _removeFile(f),
+                            )),
                         const SizedBox(height: 10),
-                        // Add more button
                         GestureDetector(
                           onTap: _pickFiles,
                           child: Container(
@@ -219,13 +184,13 @@ class _SendScreenState extends State<SendScreen> {
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(
                                 color: Colors.white.withOpacity(0.07),
-                                style: BorderStyle.solid,
                               ),
                             ),
                             child: const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.add, color: Color(0xFF5A6580), size: 18),
+                                Icon(Icons.add,
+                                    color: Color(0xFF5A6580), size: 18),
                                 SizedBox(width: 6),
                                 Text(
                                   'Add more files',
@@ -242,7 +207,7 @@ class _SendScreenState extends State<SendScreen> {
                     ),
             ),
 
-            // ── Send button ─────────────────────────────────────────────────
+            // ── Send button ──────────────────────────────────────────────────
             if (_selectedFiles.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.all(20),
@@ -270,7 +235,9 @@ class _SendScreenState extends State<SendScreen> {
                         const Text('⚡', style: TextStyle(fontSize: 18)),
                         const SizedBox(width: 8),
                         Text(
-                          'Drop ${_selectedFiles.length} file${_selectedFiles.length == 1 ? '' : 's'} · $_totalLabel',
+                          isMulti
+                              ? 'Drop to ${widget.devices.length} devices · $_totalLabel'
+                              : 'Drop ${_selectedFiles.length} file${_selectedFiles.length == 1 ? '' : 's'} · $_totalLabel',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 15,
@@ -333,6 +300,131 @@ class _SendScreenState extends State<SendScreen> {
   }
 }
 
+// ── Single device header ──────────────────────────────────────────────────────
+
+class _SingleDeviceCard extends StatelessWidget {
+  final DiscoveredDevice device;
+  const _SingleDeviceCard({required this.device});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF3D7BFF).withOpacity(0.1),
+            const Color(0xFF00E5C0).withOpacity(0.05),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF3D7BFF).withOpacity(0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(device.platformIcon, size: 26, color: const Color(0xFF3D7BFF)),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Sending to',
+                style: TextStyle(color: Color(0xFF5A6580), fontSize: 11),
+              ),
+              Text(
+                device.name,
+                style: const TextStyle(
+                  color: Color(0xFF3D7BFF),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Multi device chips ────────────────────────────────────────────────────────
+
+class _MultiDeviceChips extends StatelessWidget {
+  final List<DiscoveredDevice> devices;
+  const _MultiDeviceChips({required this.devices});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF3D7BFF).withOpacity(0.1),
+            const Color(0xFF00E5C0).withOpacity(0.05),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF3D7BFF).withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'SENDING TO ${devices.length} DEVICES',
+            style: const TextStyle(
+              color: Color(0xFF5A6580),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: devices.map((d) => _DeviceChip(device: d)).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeviceChip extends StatelessWidget {
+  final DiscoveredDevice device;
+  const _DeviceChip({required this.device});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF3D7BFF).withOpacity(0.12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF3D7BFF).withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(device.platformIcon, size: 13, color: const Color(0xFF3D7BFF)),
+          const SizedBox(width: 5),
+          Text(
+            device.name,
+            style: const TextStyle(
+              color: Color(0xFF3D7BFF),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── File row ──────────────────────────────────────────────────────────────────
+
 class _FileRow extends StatelessWidget {
   final TransferFile file;
   final VoidCallback onRemove;
@@ -358,25 +450,32 @@ class _FileRow extends StatelessWidget {
               children: [
                 Text(
                   file.name,
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
                   file.sizeLabel,
-                  style: const TextStyle(color: Color(0xFF5A6580), fontSize: 11),
+                  style: const TextStyle(
+                      color: Color(0xFF5A6580), fontSize: 11),
                 ),
               ],
             ),
           ),
           GestureDetector(
             onTap: onRemove,
-            child: const Icon(Icons.close, color: Color(0xFF5A6580), size: 18),
+            child:
+                const Icon(Icons.close, color: Color(0xFF5A6580), size: 18),
           ),
         ],
       ),
     );
   }
 }
+
+// ── Empty picker ──────────────────────────────────────────────────────────────
 
 class _EmptyPicker extends StatelessWidget {
   final VoidCallback onPick;
@@ -393,7 +492,8 @@ class _EmptyPicker extends StatelessWidget {
           const SizedBox(height: 16),
           const Text(
             'No files selected',
-            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+            style: TextStyle(
+                color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -404,20 +504,26 @@ class _EmptyPicker extends StatelessWidget {
           GestureDetector(
             onTap: picking ? null : onPick,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
               decoration: BoxDecoration(
                 color: const Color(0xFF0E1422),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFF3D7BFF).withOpacity(0.3)),
+                border: Border.all(
+                    color: const Color(0xFF3D7BFF).withOpacity(0.3)),
               ),
               child: picking
                   ? const SizedBox(
-                      width: 20, height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3D7BFF)),
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Color(0xFF3D7BFF)),
                     )
                   : const Text(
                       'Browse Files',
-                      style: TextStyle(color: Color(0xFF3D7BFF), fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                          color: Color(0xFF3D7BFF),
+                          fontWeight: FontWeight.w700),
                     ),
             ),
           ),

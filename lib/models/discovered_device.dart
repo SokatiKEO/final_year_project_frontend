@@ -2,14 +2,16 @@
 
 import 'package:flutter/material.dart';
 
-/// Represents a Dropix device discovered on the local network via mDNS.
+/// Represents a Dropix device discovered on the local network via mDNS,
+/// or a remote device paired via the relay server.
 class DiscoveredDevice {
-  final String id;         // Unique device ID (from mDNS service name)
-  final String name;       // Human-readable device name e.g. "John's Pixel 8"
-  final String platform;   // "android" | "ios" | "unknown"
-  final String host;       // Hostname or IP address
-  final int port;          // TCP port the device is listening on
+  final String id;               // Unique device ID (from mDNS service name)
+  final String name;             // Human-readable device name e.g. "John's Pixel 8"
+  final String platform;         // "android" | "ios" | "unknown"
+  final String host;             // Hostname or IP address
+  final int port;                // TCP port the device is listening on
   final DateTime discoveredAt;
+  final String? relaySessionId;  // Set when connecting via relay (null = LAN)
 
   const DiscoveredDevice({
     required this.id,
@@ -18,7 +20,10 @@ class DiscoveredDevice {
     required this.host,
     required this.port,
     required this.discoveredAt,
+    this.relaySessionId,
   });
+
+  bool get isRelay => relaySessionId != null;
 
   /// Material icon based on platform
   IconData get platformIcon {

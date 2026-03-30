@@ -27,6 +27,10 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late AnimationController _radarController;
 
+  // Multi-select state
+  final Set<String> _selectedDeviceIds = {};
+  bool get _isSelecting => _selectedDeviceIds.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -58,6 +62,34 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
+  void _toggleDevice(DiscoveredDevice device) {
+    setState(() {
+      if (_selectedDeviceIds.contains(device.id)) {
+        _selectedDeviceIds.remove(device.id);
+      } else {
+        _selectedDeviceIds.add(device.id);
+      }
+    });
+  }
+
+  void _clearSelection() {
+    setState(() => _selectedDeviceIds.clear());
+  }
+
+  void _sendToSelected(List<DiscoveredDevice> allDevices) {
+    final selected = allDevices
+        .where((d) => _selectedDeviceIds.contains(d.id))
+        .toList();
+    if (selected.isEmpty) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SendScreen(devices: selected),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -65,56 +97,85 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       body: SafeArea(
         child: Consumer<DiscoveryProvider>(
           builder: (context, provider, _) {
-            return RefreshIndicator(
-              onRefresh: provider.refresh,
-              color: const Color(0xFF3D7BFF),
-              backgroundColor: const Color(0xFF0E1422),
-              child: CustomScrollView(
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: _AppBar(
-                      deviceName: provider.localDeviceName ?? 'My Device',
-                    ),
-                  ),
+            return Stack(
+              children: [
+                RefreshIndicator(
+                  onRefresh: provider.refresh,
+                  color: const Color(0xFF3D7BFF),
+                  backgroundColor: const Color(0xFF0E1422),
+                  child: CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: _AppBar(
+                          deviceName: provider.localDeviceName ?? 'My Device',
+                          isSelecting: _isSelecting,
+                          selectedCount: _selectedDeviceIds.length,
+                          onCancelSelection: _clearSelection,
+                        ),
+                      ),
 
-                  SliverToBoxAdapter(
-                    child: _RadarWidget(
-                      controller: _radarController,
-                      deviceCount: provider.devices.length,
-                      isScanning: provider.isScanning,
-                    ),
-                  ),
+                      SliverToBoxAdapter(
+                        child: _RadarWidget(
+                          controller: _radarController,
+                          deviceCount: provider.devices.length,
+                          isScanning: provider.isScanning,
+                        ),
+                      ),
 
-                  // Drag & drop zone — desktop only, now lives in SendScreen
-                  if (provider.state == DiscoveryState.error)
-                    SliverToBoxAdapter(
-                      child: _ErrorBanner(message: provider.errorMessage),
-                    ),
-
-                  SliverToBoxAdapter(
-                    child: _SectionHeader(
-                      title: 'Nearby Devices',
-                      count: provider.devices.length,
-                    ),
-                  ),
-
-                  provider.devices.isEmpty
-                      ? SliverToBoxAdapter(
-                          child:
-                              _EmptyState(isScanning: provider.isScanning),
-                        )
-                      : SliverList(
-                          delegate: SliverChildBuilderDelegate(
-                            (context, index) => _DeviceCard(
-                              device: provider.devices[index],
-                            ),
-                            childCount: provider.devices.length,
-                          ),
+                      if (provider.state == DiscoveryState.error)
+                        SliverToBoxAdapter(
+                          child: _ErrorBanner(message: provider.errorMessage),
                         ),
 
-                  const SliverToBoxAdapter(child: SizedBox(height: 24)),
-                ],
-              ),
+                      SliverToBoxAdapter(
+                        child: _SectionHeader(
+                          title: 'Nearby Devices',
+                          count: provider.devices.length,
+                        ),
+                      ),
+
+                      provider.devices.isEmpty
+                          ? SliverToBoxAdapter(
+                              child:
+                                  _EmptyState(isScanning: provider.isScanning),
+                            )
+                          : SliverList(
+                              delegate: SliverChildBuilderDelegate(
+                                (context, index) {
+                                  final device = provider.devices[index];
+                                  return _DeviceCard(
+                                    device: device,
+                                    isSelected: _selectedDeviceIds
+                                        .contains(device.id),
+                                    isSelecting: _isSelecting,
+                                    onTap: () => _toggleDevice(device),
+                                  );
+                                },
+                                childCount: provider.devices.length,
+                              ),
+                            ),
+
+                      SliverToBoxAdapter(
+                        child: SizedBox(
+                            height: _isSelecting ? 100 : 24),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ── Send to Selected FAB ──────────────────────────────────
+                if (_isSelecting)
+                  Positioned(
+                    left: 20,
+                    right: 20,
+                    bottom: 24,
+                    child: _SendSelectedBar(
+                      selectedCount: _selectedDeviceIds.length,
+                      onCancel: _clearSelection,
+                      onSend: () => _sendToSelected(provider.devices),
+                    ),
+                  ),
+              ],
             );
           },
         ),
@@ -127,7 +188,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
 class _AppBar extends StatelessWidget {
   final String deviceName;
-  const _AppBar({required this.deviceName});
+  final bool isSelecting;
+  final int selectedCount;
+  final VoidCallback onCancelSelection;
+
+  const _AppBar({
+    required this.deviceName,
+    required this.isSelecting,
+    required this.selectedCount,
+    required this.onCancelSelection,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -150,111 +220,139 @@ class _AppBar extends StatelessWidget {
               ),
             ),
           ),
-          Row(
-            children: [
-              const SizedBox(width: 10),
-              // History
-              GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const HistoryScreen()),
-                ),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0E1422),
-                    borderRadius: BorderRadius.circular(10),
-                    border:
-                        Border.all(color: Colors.white.withOpacity(0.07)),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.history_rounded,
-                          color: Color(0xFF00E5C0), size: 15),
-                      SizedBox(width: 5),
-                      Text(
-                        'History',
-                        style: TextStyle(
-                          color: Color(0xFF00E5C0),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // Connect
-              GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ConnectScreen()),
-                ),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0E1422),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: Colors.white.withOpacity(0.07)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _isDesktop
-                            ? Icons.lan_rounded
-                            : Icons.qr_code_rounded,
-                        color: const Color(0xFF3D7BFF),
-                        size: 15,
-                      ),
-                      const SizedBox(width: 5),
-                      const Text(
-                        'Connect',
-                        style: TextStyle(
-                          color: Color(0xFF3D7BFF),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // Avatar
-              Container(
-                width: 36,
-                height: 36,
+          if (isSelecting)
+            GestureDetector(
+              onTap: onCancelSelection,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF3D7BFF), Color(0xFF00E5C0)],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
+                  color: const Color(0xFF0E1422),
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: Colors.white.withOpacity(0.07)),
                 ),
-                child: Center(
-                  child: Text(
-                    deviceName.isNotEmpty
-                        ? deviceName[0].toUpperCase()
-                        : 'D',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                child: const Row(
+                  children: [
+                    Icon(Icons.close_rounded,
+                        color: Color(0xFFFF5C87), size: 15),
+                    SizedBox(width: 5),
+                    Text(
+                      'Cancel',
+                      style: TextStyle(
+                        color: Color(0xFFFF5C87),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            Row(
+              children: [
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const HistoryScreen()),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0E1422),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: Colors.white.withOpacity(0.07)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.history_rounded,
+                            color: Color(0xFF00E5C0), size: 15),
+                        SizedBox(width: 5),
+                        Text(
+                          'History',
+                          style: TextStyle(
+                            color: Color(0xFF00E5C0),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const ConnectScreen()),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0E1422),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                          color: Colors.white.withOpacity(0.07)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _isDesktop
+                              ? Icons.lan_rounded
+                              : Icons.qr_code_rounded,
+                          color: const Color(0xFF3D7BFF),
+                          size: 15,
+                        ),
+                        const SizedBox(width: 5),
+                        const Text(
+                          'Connect',
+                          style: TextStyle(
+                            color: Color(0xFF3D7BFF),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF3D7BFF), Color(0xFF00E5C0)],
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Center(
+                    child: Text(
+                      deviceName.isNotEmpty
+                          ? deviceName[0].toUpperCase()
+                          : 'D',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
   }
 }
-
 
 // ── Radar ─────────────────────────────────────────────────────────────────────
 
@@ -356,7 +454,11 @@ class _RadarWidget extends StatelessWidget {
 class _SectionHeader extends StatelessWidget {
   final String title;
   final int count;
-  const _SectionHeader({required this.title, required this.count});
+
+  const _SectionHeader({
+    required this.title,
+    required this.count,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -391,7 +493,8 @@ class _SectionHeader extends StatelessWidget {
                 ),
               ),
             ),
-          ]
+          ],
+          const Spacer(),
         ],
       ),
     );
@@ -402,26 +505,67 @@ class _SectionHeader extends StatelessWidget {
 
 class _DeviceCard extends StatelessWidget {
   final DiscoveredDevice device;
-  const _DeviceCard({required this.device});
+  final bool isSelected;
+  final bool isSelecting;
+  final VoidCallback onTap;
+
+  const _DeviceCard({
+    required this.device,
+    required this.isSelected,
+    required this.isSelecting,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       child: GestureDetector(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => SendScreen(device: device)),
-        ),
-        child: Container(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFF0E1422),
+            color: isSelected
+                ? const Color(0xFF3D7BFF).withOpacity(0.12)
+                : const Color(0xFF0E1422),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withOpacity(0.07)),
+            border: Border.all(
+              color: isSelected
+                  ? const Color(0xFF3D7BFF).withOpacity(0.5)
+                  : Colors.white.withOpacity(0.07),
+              width: isSelected ? 1.5 : 1,
+            ),
           ),
           child: Row(
             children: [
+              // Animated selection checkbox
+              if (isSelecting)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isSelected
+                          ? const Color(0xFF3D7BFF)
+                          : Colors.transparent,
+                      border: Border.all(
+                        color: isSelected
+                            ? const Color(0xFF3D7BFF)
+                            : const Color(0xFF5A6580),
+                        width: 2,
+                      ),
+                    ),
+                    child: isSelected
+                        ? const Icon(Icons.check_rounded,
+                            size: 13, color: Colors.white)
+                        : null,
+                  ),
+                ),
+
               Container(
                 width: 44,
                 height: 44,
@@ -466,23 +610,128 @@ class _DeviceCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00E5C0),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF00E5C0).withOpacity(0.6),
-                      blurRadius: 6,
-                    )
-                  ],
+              if (!isSelecting)
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00E5C0),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF00E5C0).withOpacity(0.6),
+                        blurRadius: 6,
+                      )
+                    ],
+                  ),
                 ),
-              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ── Send Selected Bar ─────────────────────────────────────────────────────────
+
+class _SendSelectedBar extends StatelessWidget {
+  final int selectedCount;
+  final VoidCallback onCancel;
+  final VoidCallback onSend;
+
+  const _SendSelectedBar({
+    required this.selectedCount,
+    required this.onCancel,
+    required this.onSend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1422),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFF3D7BFF).withOpacity(0.3),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF3D7BFF).withOpacity(0.15),
+            blurRadius: 24,
+            spreadRadius: 2,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: const Color(0xFF3D7BFF).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: Text(
+                '$selectedCount',
+                style: const TextStyle(
+                  color: Color(0xFF3D7BFF),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              '$selectedCount device${selectedCount == 1 ? '' : 's'} selected',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onSend,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF3D7BFF), Color(0xFF00C4FF)],
+                ),
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF3D7BFF).withOpacity(0.4),
+                    blurRadius: 12,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.send_rounded, size: 14, color: Colors.white),
+                  SizedBox(width: 6),
+                  Text(
+                    'Send',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -545,7 +794,8 @@ class _ErrorBanner extends StatelessWidget {
           Expanded(
             child: Text(
               message ?? 'Discovery error. Pull to refresh.',
-              style: const TextStyle(color: Color(0xFFFF5C87), fontSize: 12),
+              style:
+                  const TextStyle(color: Color(0xFFFF5C87), fontSize: 12),
             ),
           ),
         ],

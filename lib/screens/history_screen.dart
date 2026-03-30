@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../models/transfer_record.dart';
 import '../services/history_service.dart';
@@ -26,6 +27,25 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   void _reload() => setState(() => _future = _service.loadAll());
+
+  Future<void> _openFolder() async {
+    String path;
+    if (Platform.isAndroid) {
+      path = '/storage/emulated/0/Download/Dropix';
+    } else if (Platform.isIOS) {
+      final docs = await getApplicationDocumentsDirectory();
+      path = '${docs.path}/Dropix';
+    } else if (Platform.isWindows) {
+      final home = Platform.environment['USERPROFILE'] ?? 'C:\\Users\\Public';
+      path = '$home\\Downloads\\Dropix';
+    } else {
+      final home = Platform.environment['HOME'] ?? '/tmp';
+      path = '$home/Downloads/Dropix';
+    }
+    final dir = Directory(path);
+    if (!await dir.exists()) await dir.create(recursive: true);
+    await OpenFilex.open(path);
+  }
 
   Future<void> _confirmClearAll() async {
     final confirmed = await showDialog<bool>(
@@ -88,6 +108,36 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     ),
                   ),
+                  GestureDetector(
+                    onTap: _openFolder,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00E5C0).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: const Color(0xFF00E5C0).withOpacity(0.3),
+                        ),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.folder_open_rounded,
+                              color: Color(0xFF00E5C0), size: 13),
+                          SizedBox(width: 5),
+                          Text(
+                            'Open Folder',
+                            style: TextStyle(
+                              color: Color(0xFF00E5C0),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   FutureBuilder<List<TransferRecord>>(
                     future: _future,
                     builder: (_, snap) {
