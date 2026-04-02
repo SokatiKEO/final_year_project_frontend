@@ -6,11 +6,13 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:nsd/nsd.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/discovered_device.dart';
 
 const String _kServiceType = '_dropix._tcp';
 const int _kListenPort = 49152;
+const String _kDeviceIdKey = 'dropix_device_id';
 
 class DiscoveryService {
   static final DiscoveryService _instance = DiscoveryService._internal();
@@ -66,7 +68,22 @@ class DiscoveryService {
   // ── Identity ───────────────────────────────────────────────────────────────
 
   Future<void> _resolveLocalIdentity() async {
-    _localDeviceId ??= const Uuid().v4();
+    // Load persisted device ID, or generate and save a new one.
+    // This ensures the same device ID is used across app restarts,
+    // preventing duplicate rows in the devices table on the backend.
+    if (_localDeviceId == null) {
+      final prefs = await SharedPreferences.getInstance();
+      String? storedId = prefs.getString(_kDeviceIdKey);
+      if (storedId == null) {
+        storedId = const Uuid().v4();
+        await prefs.setString(_kDeviceIdKey, storedId);
+        print('[Dropix] 🆔 Generated and saved new device ID: $storedId');
+      } else {
+        print('[Dropix] 🆔 Loaded persisted device ID: $storedId');
+      }
+      _localDeviceId = storedId;
+    }
+
     final info = DeviceInfoPlugin();
     if (Platform.isAndroid) {
       final android = await info.androidInfo;
@@ -207,14 +224,14 @@ class DiscoveryService {
     }
   }
 
-    Future<String?> _resolveHost(Service service) async {
+  Future<String?> _resolveHost(Service service) async {
     try {
       final hostname = service.host;
       if (hostname == null) return null;
- 
+
       // If it's already an IP address, return it directly
       if (RegExp(r'^\d+\.\d+\.\d+\.\d+$').hasMatch(hostname)) return hostname;
- 
+
       // Resolve mDNS hostname to IP
       final addresses = await InternetAddress.lookup(hostname);
       final ipv4 = addresses.where((a) => a.type == InternetAddressType.IPv4);

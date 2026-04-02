@@ -200,9 +200,9 @@ class _SingleTransferringViewState extends State<_SingleTransferringView>
             children: [
               _StatCard(label: 'Speed', value: speed),
               const SizedBox(width: 10),
-              _StatCard(label: 'Mode', value: 'WiFi'),
+              const _StatCard(label: 'Mode', value: 'WiFi'),
               const SizedBox(width: 10),
-              _StatCard(label: 'Link', value: 'P2P'),
+              const _StatCard(label: 'Link', value: 'P2P'),
             ],
           ),
           const Spacer(),
