@@ -147,7 +147,7 @@ class _SingleTransferringViewState extends State<_SingleTransferringView>
           const SizedBox(height: 32),
           Container(
             padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
+            decoration: BoxDecoration( 
               color: const Color(0xFF0E1422),
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: Colors.white.withOpacity(0.07)),

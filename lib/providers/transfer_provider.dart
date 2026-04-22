@@ -278,6 +278,7 @@ class TransferProvider extends ChangeNotifier {
           sessionId: state.device.relaySessionId!,
           files: files,
           deviceName: localName,
+          deviceId: DiscoveryService().localDeviceId,
         );
       } else {
         // Use direct LAN path

@@ -213,6 +213,7 @@ class TransferService {
     final sw = Stopwatch()..start();
     int lastBytes = 0;
     int lastTime = 0;
+    double lastSpeed = 0;
 
     while (received < fileSize) {
       final toRead = (fileSize - received) < _kChunkSize
@@ -223,9 +224,8 @@ class TransferService {
       received += chunk.length;
 
       final now = sw.elapsedMilliseconds;
-      double speed = 0;
       if (now - lastTime >= 500) {
-        speed = (received - lastBytes) / ((now - lastTime) / 1000);
+        lastSpeed = (received - lastBytes) / ((now - lastTime) / 1000);
         lastBytes = received;
         lastTime = now;
       }
@@ -234,7 +234,7 @@ class TransferService {
         fileName: fileName,
         bytesTransferred: received,
         totalBytes: fileSize,
-        speedBytesPerSec: speed,
+        speedBytesPerSec: lastSpeed,
       ));
     }
 
@@ -347,6 +347,7 @@ class TransferService {
         final sw = Stopwatch()..start();
         int lastBytes2 = 0;
         int lastTime2 = 0;
+        double lastSpeed2 = 0;
 
         while (received < fileSize) {
           final toRead = (fileSize - received) < _kChunkSize
@@ -357,9 +358,8 @@ class TransferService {
           received += chunk.length;
 
           final now = sw.elapsedMilliseconds;
-          double speed = 0;
           if (now - lastTime2 >= 500) {
-            speed = (received - lastBytes2) / ((now - lastTime2) / 1000);
+            lastSpeed2 = (received - lastBytes2) / ((now - lastTime2) / 1000);
             lastBytes2 = received;
             lastTime2 = now;
           }
@@ -367,7 +367,7 @@ class TransferService {
             fileName: fileName,
             bytesTransferred: received,
             totalBytes: fileSize,
-            speedBytesPerSec: speed,
+            speedBytesPerSec: lastSpeed2,
           ));
         }
 
@@ -396,17 +396,21 @@ class TransferService {
   /// Send files through the backend WebSocket relay.
   /// [backendBase] e.g. "https://web-production-04f9.up.railway.app"
   /// [sessionId]  from POST /relay/session
+  /// [deviceId]   the persistent local device ID (stored in SharedPreferences)
   Stream<TransferEvent> sendFilesViaRelay({
     required String backendBase,
     required String sessionId,
     required List<dynamic> files,
     required String deviceName,
+    String? deviceId,
   }) async* {
     // Convert http(s) → ws(s)
     final wsBase = backendBase
         .replaceFirst(RegExp(r'^https://'), 'wss://')
         .replaceFirst(RegExp(r'^http://'), 'ws://');
-    final uri = Uri.parse('$wsBase/relay/ws/$sessionId/sender');
+    final deviceIdParam =
+        deviceId != null ? '?device_id=${Uri.encodeComponent(deviceId)}' : '';
+    final uri = Uri.parse('$wsBase/relay/ws/$sessionId/sender$deviceIdParam');
 
     WebSocket? ws;
     try {
@@ -509,15 +513,15 @@ class TransferService {
         final sw = Stopwatch()..start();
         int lastBytes = 0;
         int lastTime = 0;
+        double lastSpeed = 0;
 
         await for (final chunk in ioFile.openRead()) {
           sendBytes(chunk);
           sent += chunk.length;
 
           final now = sw.elapsedMilliseconds;
-          double speed = 0;
           if (now - lastTime >= 500) {
-            speed = (sent - lastBytes) / ((now - lastTime) / 1000);
+            lastSpeed = (sent - lastBytes) / ((now - lastTime) / 1000);
             lastBytes = sent;
             lastTime = now;
           }
@@ -526,7 +530,7 @@ class TransferService {
             fileName: fileName,
             bytesTransferred: sent,
             totalBytes: fileSize,
-            speedBytesPerSec: speed,
+            speedBytesPerSec: lastSpeed,
           );
         }
 
@@ -649,15 +653,15 @@ class TransferService {
     final sw = Stopwatch()..start();
     int lastBytes = 0;
     int lastTime = 0;
+    double lastSpeed = 0;
 
     await for (final chunk in ioFile.openRead()) {
       socket.add(chunk);
       sent += chunk.length;
 
       final now = sw.elapsedMilliseconds;
-      double speed = 0;
       if (now - lastTime >= 500) {
-        speed = (sent - lastBytes) / ((now - lastTime) / 1000);
+        lastSpeed = (sent - lastBytes) / ((now - lastTime) / 1000);
         lastBytes = sent;
         lastTime = now;
       }
@@ -666,7 +670,7 @@ class TransferService {
         fileName: fileName,
         bytesTransferred: sent,
         totalBytes: fileSize,
-        speedBytesPerSec: speed,
+        speedBytesPerSec: lastSpeed,
       );
     }
     await socket.flush();

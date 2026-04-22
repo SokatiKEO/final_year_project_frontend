@@ -20,6 +20,7 @@ import 'package:provider/provider.dart';
 import '../models/discovered_device.dart';
 import '../providers/discovery_provider.dart';
 import '../providers/transfer_provider.dart';
+import '../services/discovery_service.dart';
 import '../services/transfer_service.dart';
 import 'receive_screen.dart';
 import 'send_screen.dart';
@@ -52,7 +53,7 @@ class _RelayScreenState extends State<RelayScreen> {
 
   final _codeController = TextEditingController();
 
-  String get _deviceId => _localDeviceId();
+  String get _deviceId => DiscoveryService().localDeviceId ?? _localDeviceId();
   String get _deviceName =>
       context.read<DiscoveryProvider>().localDeviceName ?? 'My Device';
 
@@ -318,8 +319,9 @@ class _RelayScreenState extends State<RelayScreen> {
         .replaceFirst(RegExp(r'^http://'), 'ws://');
 
     try {
+      final localDeviceId = DiscoveryService().localDeviceId ?? '';
       final ws = await WebSocket.connect(
-        '$wsBase/relay/ws/$sessionId/receiver',
+        '$wsBase/relay/ws/$sessionId/receiver?device_id=${Uri.encodeComponent(localDeviceId)}',
         // Keep the connection alive while waiting for the sender to start
       );
       ws.pingInterval = const Duration(seconds: 20);
@@ -982,7 +984,7 @@ class _RelayScreenState extends State<RelayScreen> {
                               color: Colors.white, strokeWidth: 2),
                         )
                       : Text(
-                          '⚡  Send to ${_selectedPeerIds.length} device${_selectedPeerIds.length == 1 ? '' : 's'}',
+                          'Send to ${_selectedPeerIds.length} device${_selectedPeerIds.length == 1 ? '' : 's'}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 14,
@@ -1025,9 +1027,7 @@ class _RelayScreenState extends State<RelayScreen> {
     final isSelected = _selectedPeerIds.contains(peer.deviceId);
 
     return GestureDetector(
-      onTap: hasPendingSession
-          ? () => _receiveFromPeer(peer)
-          : () => _togglePeerSelection(peer),
+      onTap: () => _togglePeerSelection(peer),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         margin: const EdgeInsets.only(bottom: 10),
@@ -1122,13 +1122,7 @@ class _RelayScreenState extends State<RelayScreen> {
                 ],
               ),
             ),
-            if (hasPendingSession)
-              _ActionChip(
-                label: '📥 Receive',
-                color: const Color(0xFF00E5C0),
-                loading: false,
-                onTap: () => _receiveFromPeer(peer),
-              ),
+
           ],
         ),
       ),

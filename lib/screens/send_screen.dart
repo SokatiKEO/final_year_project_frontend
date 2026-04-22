@@ -232,8 +232,6 @@ class _SendScreenState extends State<SendScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text('⚡', style: TextStyle(fontSize: 18)),
-                        const SizedBox(width: 8),
                         Text(
                           isMulti
                               ? 'Drop to ${widget.devices.length} devices · $_totalLabel'

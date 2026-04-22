@@ -26,12 +26,13 @@ class ReceiveSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<TransferProvider>(
       builder: (context, provider, _) {
-        // if (provider.phase == TransferPhase.done ||
-        //     provider.phase == TransferPhase.error) {
-        //   WidgetsBinding.instance.addPostFrameCallback((_) {
-        //     if (Navigator.canPop(context)) Navigator.pop(context);
-        //   });
-        // }
+        // Auto-dismiss when idle — sheet was left open after a reset.
+        if (provider.phase == TransferPhase.idle) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (Navigator.canPop(context)) Navigator.pop(context);
+          });
+          return const SizedBox.shrink();
+        }
 
         // Lock drag during active transfer so it can't be accidentally dismissed
         final isTransferring = provider.phase == TransferPhase.transferring;
